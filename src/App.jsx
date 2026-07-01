@@ -300,6 +300,10 @@ const initUsers = [
   { id: 2, pin: "0000", role: "salesperson", name: "Sales 1" },
 ];
 
+// Built-in super admin (not stored in the database, so it always works).
+// Change this PIN to whatever you like.
+const SUPER_PIN = "9999";
+
 // Starter dealer & product lists — edit these on the Dealers / Products pages.
 const initDealers = [
   { id: 1, name: "ABC Construction" },
@@ -341,6 +345,7 @@ const NAV = [
   { id: "dealers", label: "Dealers", icon: "🤝", admin: true },
   { id: "products", label: "Products", icon: "🛁", admin: true },
   { id: "users", label: "User Management", icon: "👥", admin: true },
+  { id: "system", label: "Data Management", icon: "🗄️", admin: true, super: true },
 ];
 
 const CHART_COLORS = ["#9A7B4E", "#10B981", "#F59E0B", "#B5715A", "#EF4444"];
@@ -422,7 +427,17 @@ export default function App() {
   if (!user) return <LoginScreen users={users} onLogin={u => { setUser(u); setPage("dashboard"); }} />;
 
   const go = id => { setPage(id); setNavOpen(false); };
-  const isAdmin = user.role === "admin";
+  const isSuperAdmin = user.role === "superadmin";
+  const isAdmin = user.role === "admin" || isSuperAdmin;
+
+  // Super-admin data tools. Business data is reset; user accounts are left alone.
+  const loadTestData = () => {
+    setLogs(seedLogs); setDamages(seedDamages); setDocs(seedDocs);
+    setDealers(initDealers); setProducts(initProducts); setTasks(initTasks);
+  };
+  const clearAllData = () => {
+    setLogs([]); setDamages([]); setDocs([]); setDealers([]); setProducts([]); setTasks([]);
+  };
 
   return (
     <>
@@ -443,7 +458,7 @@ export default function App() {
             ))}
             {isAdmin && <>
               <div className="nav-section">Admin</div>
-              {NAV.filter(n => n.admin).map(n => (
+              {NAV.filter(n => n.admin && (!n.super || isSuperAdmin)).map(n => (
                 <button key={n.id} className={`nav-item ${page === n.id ? "active" : ""}`} onClick={() => go(n.id)}>
                   <span className="nav-icon">{n.icon}</span>{n.label}
                 </button>
@@ -477,6 +492,7 @@ export default function App() {
           {page === "dealers" && <CatalogPage title="Dealers" noun="Dealer" icon="🤝" items={dealers} setItems={setDealers} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} />}
           {page === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" items={products} setItems={setProducts} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} />}
           {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} />}
+          {page === "system" && isSuperAdmin && <SystemPage logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} onLoad={loadTestData} onClear={clearAllData} />}
           {page === "users" && <UserMgmtPage users={users} setUsers={setUsers} currentUser={user} onAdd={() => { setEditUser(null); setModal("user"); }} onEdit={u => { setEditUser(u); setModal("user"); }} />}
         </div>
       </div>
@@ -499,6 +515,11 @@ function LoginScreen({ users, onLogin }) {
   const [err, setErr] = useState("");
   const [hero] = useState(() => HERO_IMAGES[Math.floor(Math.random() * HERO_IMAGES.length)]);
   const handle = () => {
+    if (role === "superadmin") {
+      if (pin === SUPER_PIN) { onLogin({ id: "super", name: "Super Admin", role: "superadmin" }); setErr(""); }
+      else setErr("Incorrect PIN. Please try again.");
+      return;
+    }
     const match = users.find(u => u.role === role && u.pin === pin);
     if (match) { onLogin(match); setErr(""); } else setErr("Incorrect PIN. Please try again.");
   };
@@ -533,6 +554,7 @@ function LoginScreen({ users, onLogin }) {
               <div className="role-row">
                 <button className={`role-btn ${role === "salesperson" ? "active" : ""}`} onClick={() => setRole("salesperson")}>Salesperson</button>
                 <button className={`role-btn ${role === "admin" ? "active" : ""}`} onClick={() => setRole("admin")}>Admin</button>
+                <button className={`role-btn ${role === "superadmin" ? "active" : ""}`} onClick={() => setRole("superadmin")}>Super Admin</button>
               </div>
             </div>
             <div className="form-group">
@@ -1123,6 +1145,38 @@ function TaskModal({ user, edit, tasks, setTasks, onClose }) {
       <div className="form-group"><div className="field-label">Details</div><input className="field-input" placeholder="Site, dealer, notes…" value={details} onChange={e => setDetails(e.target.value)} /></div>
       <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
     </div></div>
+  );
+}
+
+// ── DATA MANAGEMENT (super admin) ─────────────────────────────────────────────
+function SystemPage({ logs, damages, docs, dealers, products, tasks, onLoad, onClear }) {
+  const rows = [["Daily logs", logs.length], ["Damage", damages.length], ["Documents", docs.length], ["Dealers", dealers.length], ["Products", products.length], ["Tasks", tasks.length]];
+  const load = () => { if (window.confirm("Load sample test data? This overwrites current logs, documents, dealers, products and tasks. User accounts are kept.")) onLoad(); };
+  const clear = () => { if (window.confirm("Delete ALL business data (logs, documents, dealers, products, tasks)? User accounts are kept. This cannot be undone.")) onClear(); };
+  return (
+    <div className="content">
+      <div className="card">
+        <div className="card-title">Current Data</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+          {rows.map(([l, n]) => (
+            <div key={l} style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 8px", textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#9A7B4E" }}>{n}</div>
+              <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>{l}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-title">Load Test Data</div>
+        <div className="card-sub" style={{ marginBottom: 14 }}>Fills the app with sample dealers, products, daily logs, documents and tasks so you can try things out. Overwrites the current business data — user accounts are kept.</div>
+        <button className="btn btn-primary" onClick={load}>Load Test Data</button>
+      </div>
+      <div className="card" style={{ borderColor: "#F6CDCD" }}>
+        <div className="card-title" style={{ color: "#B91C1C" }}>Clear All Data</div>
+        <div className="card-sub" style={{ marginBottom: 14 }}>Permanently removes all logs, damage reports, documents, dealers, products and tasks, leaving a clean slate for real use. User accounts are kept. This cannot be undone.</div>
+        <button className="btn btn-danger" onClick={clear}>Clear All Data</button>
+      </div>
+    </div>
   );
 }
 
