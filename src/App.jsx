@@ -3,6 +3,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, R
 import { db } from "./services/firebase";
 import { doc, onSnapshot, setDoc } from "firebase/firestore";
 import { isCloudinaryConfigured, uploadImage } from "./services/cloudinary";
+import { downloadDoc, printDoc } from "./services/pdf";
 
 // Mirrors one collection to a single Firestore document ("appState/<key>") and keeps
 // it in sync across devices in real time. Setter matches useState (value or updater
@@ -264,21 +265,40 @@ const STYLES = `
 `;
 
 // ── SEED DATA ──────────────────────────────────────────────────────────────────
+const SEED_STAFF = ["Ali", "Raju", "Wei", "Marcus"];
+const SEED_DEALERS = ["One9supplies Pte Ltd", "ABC Construction", "BuildRight Pte Ltd", "Summit Renovation"];
+const SEED_PRODUCTS = [
+  ["150mm S-Trap Model One Toilet Bowl", 198],
+  ["250mm S-Trap Model One Toilet Bowl", 198],
+  ["180mm P-Trap Model One Toilet Bowl", 198],
+  ["150mm S-Trap Model One (WDI)", 160],
+  ["Flexible Pan Collar (FLC)", 210],
+  ["CushRinse PP Bidet Seat Cover (M1FG-BC)", 70],
+];
 const seedLogs = (() => {
   const entries = [];
-  const names = ["Ali", "Raju", "Wei"];
-  for (let i = 13; i >= 0; i--) {
+  let seq = 1;
+  for (let i = 20; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
     const iso = d.toISOString().split("T")[0];
     const label = d.toLocaleDateString("en-SG", { day: "2-digit", month: "short", year: "numeric" });
-    entries.push({
-      sold: Math.floor(Math.random() * 30) + 10,
-      returned: Math.floor(Math.random() * 8),
-      notes: "", photo: null,
-      by: names[Math.floor(Math.random() * names.length)],
-      date: label, dateISO: iso,
-      time: "09:00"
-    });
+    const orders = 1 + Math.floor(Math.random() * 2);
+    for (let k = 0; k < orders; k++) {
+      const [product, price] = SEED_PRODUCTS[Math.floor(Math.random() * SEED_PRODUCTS.length)];
+      const num = String(123000 + seq);
+      entries.push({
+        dealer: SEED_DEALERS[Math.floor(Math.random() * SEED_DEALERS.length)],
+        product, price,
+        sold: 3 + Math.floor(Math.random() * 20),
+        returned: Math.random() < 0.2 ? 1 + Math.floor(Math.random() * 2) : 0,
+        exchanged: Math.random() < 0.15 ? 1 : 0,
+        notes: "", photo: null,
+        by: SEED_STAFF[Math.floor(Math.random() * SEED_STAFF.length)],
+        date: label, dateISO: iso, time: "09:00",
+        poNo: "PO-" + num, doNo: "DO-" + num,
+      });
+      seq++;
+    }
   }
   return entries;
 })();
@@ -295,8 +315,11 @@ const seedDocs = [
 ];
 
 const initUsers = [
-  { id: 1, pin: "1234", role: "admin", name: "Admin" },
-  { id: 2, pin: "0000", role: "salesperson", name: "Sales 1" },
+  { id: 1, pin: "1234", role: "admin", name: "Terence" },
+  { id: 2, pin: "0001", role: "salesperson", name: "Ali" },
+  { id: 3, pin: "0002", role: "salesperson", name: "Raju" },
+  { id: 4, pin: "0003", role: "salesperson", name: "Wei" },
+  { id: 5, pin: "0004", role: "salesperson", name: "Marcus" },
 ];
 
 // Built-in super admin (not stored in the database, so it always works).
@@ -305,19 +328,20 @@ const SUPER_PIN = "9999";
 
 // Starter dealer & product lists — edit these on the Dealers / Products pages.
 const initDealers = [
-  { id: 1, name: "ABC Construction" },
-  { id: 2, name: "BuildRight Pte Ltd" },
-  { id: 3, name: "Summit Renovation" },
+  { id: 1, name: "One9supplies Pte Ltd" },
+  { id: 2, name: "ABC Construction" },
+  { id: 3, name: "BuildRight Pte Ltd" },
+  { id: 4, name: "Summit Renovation" },
 ];
 const initProducts = [
-  { id: 1, name: "One-Piece WC", stock: 40, threshold: 10 },
-  { id: 2, name: "Two-Piece WC", stock: 35, threshold: 10 },
-  { id: 3, name: "Wall-Hung WC", stock: 22, threshold: 8 },
-  { id: 4, name: "WC Seat Cover", stock: 60, threshold: 15 },
-  { id: 5, name: "Concealed Cistern", stock: 9, threshold: 8 },
-  { id: 6, name: "Basin Mixer", stock: 30, threshold: 10 },
-  { id: 7, name: "Countertop Basin", stock: 25, threshold: 8 },
-  { id: 8, name: "Vanity Cabinet", stock: 5, threshold: 6 },
+  { id: 1, name: "150mm S-Trap Model One Toilet Bowl", price: 198, stock: 40, threshold: 10 },
+  { id: 2, name: "250mm S-Trap Model One Toilet Bowl", price: 198, stock: 30, threshold: 10 },
+  { id: 3, name: "180mm P-Trap Model One Toilet Bowl", price: 198, stock: 24, threshold: 8 },
+  { id: 4, name: "150mm S-Trap Model One (WDI)", price: 160, stock: 20, threshold: 8 },
+  { id: 5, name: "Flexible Pan Collar (FLC)", price: 210, stock: 60, threshold: 15 },
+  { id: 6, name: '1" Offset Pan Collar (IN-1)', price: 0, stock: 100, threshold: 20 },
+  { id: 7, name: "Aqua-Float Wall Hung Toilet Bowl (HWC-001)", price: 380, stock: 6, threshold: 6 },
+  { id: 8, name: "CushRinse PP Bidet Seat Cover (M1FG-BC)", price: 70, stock: 25, threshold: 8 },
 ];
 
 // Daily tasks / servicing jobs.
@@ -333,7 +357,7 @@ const todayISO = () => new Date().toISOString().split("T")[0];
 
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: "📊", admin: false },
-  { id: "daily", label: "Daily Log", icon: "📝", admin: false },
+  { id: "daily", label: "Orders", icon: "📝", admin: false },
   { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false },
   { id: "documents", label: "Documents", icon: "📄", admin: false },
   { id: "tasks", label: "Tasks & Servicing", icon: "🧰", admin: false },
@@ -406,21 +430,18 @@ export default function App() {
   const [editProduct, setEditProduct] = useState(null);
   const [tasks, setTasks] = usePersistentState("tasks", initTasks);
   const [editTask, setEditTask] = useState(null);
+  const [lastOrder, setLastOrder] = useState(null);
 
-  // Saving a purchase: record it, deduct warehouse stock, auto-generate a linked DO + PO.
+  // Saving a New Order: record it and adjust warehouse stock (delivered out, returned back).
   const handlePurchase = e => {
     setLogs([e, ...logs]);
-    const qty = Number(e.sold) || 0;
-    if (e.product && qty > 0) {
-      setProducts(ps => ps.map(p => p.name.toLowerCase() === e.product.toLowerCase() ? { ...p, stock: (Number(p.stock) || 0) - qty } : p));
-      const t = Date.now();
-      const note = `Auto-generated from purchase — ${qty} × ${e.product}`;
-      const base = { product: e.product, qty, party: e.dealer || "—", amount: "", notes: note, photo: null, by: e.by, date: e.date, dateISO: e.dateISO, auto: true };
-      const doDoc = { ...base, type: "DO", refNo: `DO-${String(t).slice(-6)}` };
-      const poDoc = { ...base, type: "PO", refNo: `PO-${String(t + 1).slice(-6)}` };
-      setDocs(ds => [doDoc, poDoc, ...ds]);
+    const delivered = Number(e.sold) || 0;
+    const returned = Number(e.returned) || 0;
+    if (e.product && (delivered || returned)) {
+      setProducts(ps => ps.map(p => p.name.toLowerCase() === e.product.toLowerCase() ? { ...p, stock: (Number(p.stock) || 0) - delivered + returned } : p));
     }
-    setModal(null);
+    setLastOrder(e);
+    setModal("order-created");
   };
 
   if (!user) return <LoginScreen users={users} onLogin={u => { setUser(u); setPage("dashboard"); }} />;
@@ -431,6 +452,7 @@ export default function App() {
 
   // Super-admin data tools. Business data is reset; user accounts are left alone.
   const loadTestData = () => {
+    setUsers(initUsers);
     setLogs(seedLogs); setDamages(seedDamages); setDocs(seedDocs);
     setDealers(initDealers); setProducts(initProducts); setTasks(initTasks);
   };
@@ -480,8 +502,8 @@ export default function App() {
             <div className="topbar-date">{todayStr()}</div>
           </div>
 
-          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} isAdmin={isAdmin} onAdd={() => setModal("log")} onGoStock={() => go("products")} />}
-          {page === "daily" && <DailyPage logs={logs} onAdd={() => setModal("log")} />}
+          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("products")} />}
+          {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} />}
           {page === "damage" && <DamagePage damages={damages} onAdd={() => setModal("damage")} />}
           {page === "documents" && <DocumentsPage docs={docs} onAdd={t => { setDocType(t); setModal("doc"); }} />}
           {page === "reports" && <ReportsPage logs={logs} />}
@@ -496,7 +518,8 @@ export default function App() {
         </div>
       </div>
 
-      {modal === "log" && <LogModal user={user} dealers={dealers} setDealers={setDealers} products={products} setProducts={setProducts} onSave={handlePurchase} onClose={() => setModal(null)} />}
+      {modal === "log" && <LogModal user={user} dealers={dealers} products={products} onSave={handlePurchase} onClose={() => setModal(null)} />}
+      {modal === "order-created" && lastOrder && <OrderCreatedModal order={lastOrder} onClose={() => setModal(null)} />}
       {modal === "damage" && <DamageModal user={user} onSave={e => { setDamages([e, ...damages]); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([e, ...docs]); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={() => setModal(null)} />}
@@ -563,7 +586,7 @@ function LoginScreen({ users, onLogin }) {
             </div>
             {err && <div className="login-err">{err}</div>}
             <button className="login-btn" onClick={handle}>Sign In</button>
-            <div className="pin-hint">Salesperson: 0000 · Admin: 1234</div>
+            <div className="pin-hint">Admin 1234 · Sales 0001–0004 · Super Admin 9999</div>
           </div>
         </div>
       </div>
@@ -572,13 +595,15 @@ function LoginScreen({ users, onLogin }) {
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function DashboardPage({ logs, damages, docs, products, isAdmin, onAdd, onGoStock }) {
-  const todayLogs = logs.filter(l => l.date === todayStr());
+function DashboardPage({ logs, damages, docs, products, isAdmin, me, onAdd, onGoStock }) {
+  // Salespeople only ever see their own orders; admins see everything.
+  const scoped = isAdmin ? logs : logs.filter(l => l.by === me);
+  const todayLogs = scoped.filter(l => l.date === todayStr());
   const sold = todayLogs.reduce((s, l) => s + Number(l.sold), 0);
   const returned = todayLogs.reduce((s, l) => s + Number(l.returned), 0);
+  const exchanged = todayLogs.reduce((s, l) => s + Number(l.exchanged || 0), 0);
   const lowStock = (products || []).filter(p => Number(p.stock) <= Number(p.threshold));
   const pendingDmg = damages.filter(d => d.status === "pending").length;
-  const totalBills = docs.filter(d => d.type === "BILL").reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
 
   // Last 7 days bar chart data
   const last7 = (() => {
@@ -587,7 +612,7 @@ function DashboardPage({ logs, damages, docs, products, isAdmin, onAdd, onGoStoc
       const d = new Date(); d.setDate(d.getDate() - i);
       const iso = d.toISOString().split("T")[0];
       const label = d.toLocaleDateString("en-SG", { day: "2-digit", month: "short" });
-      const dayLogs = logs.filter(l => l.dateISO === iso);
+      const dayLogs = scoped.filter(l => l.dateISO === iso);
       arr.push({
         day: label,
         Delivered: dayLogs.reduce((s, l) => s + Number(l.sold), 0),
@@ -604,7 +629,7 @@ function DashboardPage({ logs, damages, docs, products, isAdmin, onAdd, onGoStoc
       const d = new Date(); d.setDate(d.getDate() - i);
       const iso = d.toISOString().split("T")[0];
       const label = d.toLocaleDateString("en-SG", { day: "2-digit", month: "short" });
-      const dayLogs = logs.filter(l => l.dateISO === iso);
+      const dayLogs = scoped.filter(l => l.dateISO === iso);
       arr.push({ day: label, Delivered: dayLogs.reduce((s, l) => s + Number(l.sold), 0) });
     }
     return arr;
@@ -645,18 +670,31 @@ function DashboardPage({ logs, damages, docs, products, isAdmin, onAdd, onGoStoc
         <div className="kpi-card">
           <div className="kpi-icon" style={{ background: "#F3ECE0" }}>🛒</div>
           <div className="kpi-val" style={{ color: "#9A7B4E" }}>{sold}</div>
-          <div className="kpi-lbl">Delivered Today</div>
+          <div className="kpi-lbl">{isAdmin ? "Delivered Today" : "My Delivered Today"}</div>
         </div>
         <div className="kpi-card">
-          <div className="kpi-icon" style={{ background: "#FEF2F2" }}>⚠️</div>
-          <div className="kpi-val" style={{ color: "#EF4444" }}>{pendingDmg}</div>
-          <div className="kpi-lbl">Damage Pending</div>
+          <div className="kpi-icon" style={{ background: "#F4E9E3" }}>↩️</div>
+          <div className="kpi-val" style={{ color: "#B5715A" }}>{returned}</div>
+          <div className="kpi-lbl">Returned Today</div>
         </div>
         <div className="kpi-card">
-          <div className="kpi-icon" style={{ background: "#F4E9E3" }}>💰</div>
-          <div className="kpi-val" style={{ color: "#B5715A", fontSize: 20 }}>SGD {totalBills.toFixed(0)}</div>
-          <div className="kpi-lbl">Total Billed</div>
+          <div className="kpi-icon" style={{ background: "#FFFBEB" }}>🔁</div>
+          <div className="kpi-val" style={{ color: "#F59E0B" }}>{exchanged}</div>
+          <div className="kpi-lbl">Exchanged Today</div>
         </div>
+        {isAdmin ? (
+          <div className="kpi-card">
+            <div className="kpi-icon" style={{ background: "#FEF2F2" }}>⚠️</div>
+            <div className="kpi-val" style={{ color: "#EF4444" }}>{pendingDmg}</div>
+            <div className="kpi-lbl">Damage Pending</div>
+          </div>
+        ) : (
+          <div className="kpi-card">
+            <div className="kpi-icon" style={{ background: "#F3ECE0" }}>📦</div>
+            <div className="kpi-val" style={{ color: "#9A7B4E" }}>{scoped.length}</div>
+            <div className="kpi-lbl">My Orders</div>
+          </div>
+        )}
       </div>
 
       {/* Main charts */}
@@ -692,7 +730,8 @@ function DashboardPage({ logs, damages, docs, products, isAdmin, onAdd, onGoStoc
           </ResponsiveContainer>
         </div>
 
-        {/* Pie chart - doc breakdown */}
+        {/* Pie chart - doc breakdown (admin only) */}
+        {isAdmin && (
         <div className="card">
           <div className="card-title">Document Breakdown</div>
           <div className="card-sub">By type filed</div>
@@ -710,10 +749,11 @@ function DashboardPage({ logs, damages, docs, products, isAdmin, onAdd, onGoStoc
             </ResponsiveContainer>
           )}
         </div>
+        )}
       </div>
 
-      {/* Salesperson chart */}
-      {spData.length > 0 && (
+      {/* Salesperson chart (admin only) */}
+      {isAdmin && spData.length > 0 && (
         <div className="card">
           <div className="card-title">Performance by Salesperson</div>
           <ResponsiveContainer width="100%" height={180}>
@@ -729,28 +769,30 @@ function DashboardPage({ logs, damages, docs, products, isAdmin, onAdd, onGoStoc
         </div>
       )}
 
-      <button className="btn btn-primary" onClick={onAdd} style={{ width: "100%", padding: 14, fontSize: 15 }}>+ Add Today's Entry</button>
+      <button className="btn btn-primary" onClick={onAdd} style={{ width: "100%", padding: 14, fontSize: 15 }}>+ New Order</button>
     </div>
   );
 }
 
 // ── DAILY LOG ─────────────────────────────────────────────────────────────────
-function DailyPage({ logs, onAdd }) {
+function DailyPage({ logs, me, isAdmin, onAdd }) {
   const [filterDate, setFilterDate] = useState(todayISO());
-  const filtered = filterDate ? logs.filter(l => l.dateISO === filterDate) : logs;
-  const sold = filtered.reduce((s, l) => s + Number(l.sold), 0);
+  const mine = isAdmin ? logs : logs.filter(l => l.by === me);
+  const filtered = filterDate ? mine.filter(l => l.dateISO === filterDate) : mine;
+  const delivered = filtered.reduce((s, l) => s + Number(l.sold), 0);
   const returned = filtered.reduce((s, l) => s + Number(l.returned), 0);
+  const exchanged = filtered.reduce((s, l) => s + Number(l.exchanged || 0), 0);
   return (
     <div className="content">
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div className="card-title" style={{ marginBottom: 0 }}>Filter by Date</div>
+          <div className="card-title" style={{ marginBottom: 0 }}>{isAdmin ? "All Orders" : "My Orders"} · Filter by Date</div>
           <button className="btn btn-ghost btn-xs" onClick={() => setFilterDate("")}>Show All</button>
         </div>
         <input className="field-input" type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
         {filterDate && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
-            {[["Delivered", sold, "#9A7B4E", "#F3ECE0"],["Returned", returned, "#B5715A","#F4E9E3"]].map(([l,v,c,bg]) => (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 10 }}>
+            {[["Delivered", delivered, "#9A7B4E", "#F3ECE0"],["Returned", returned, "#B5715A","#F4E9E3"],["Exchanged", exchanged, "#F59E0B","#FFFBEB"]].map(([l,v,c,bg]) => (
               <div key={l} style={{ background: bg, borderRadius: 10, padding: "12px 8px", textAlign: "center" }}>
                 <div style={{ fontSize: 24, fontWeight: 800, color: c }}>{v}</div>
                 <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>{l}</div>
@@ -759,8 +801,8 @@ function DailyPage({ logs, onAdd }) {
           </div>
         )}
       </div>
-      <div className="section-hdr"><div className="section-title">Entries ({filtered.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add Entry</button></div>
-      {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📝</div><div className="empty-lbl">No entries for this date.</div></div>
+      <div className="section-hdr"><div className="section-title">Orders ({filtered.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Order</button></div>
+      {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📝</div><div className="empty-lbl">No orders for this date.</div></div>
         : filtered.map((l, i) => <LogRow key={i} log={l} />)}
     </div>
   );
@@ -779,9 +821,18 @@ function LogRow({ log }) {
       <div className="nums-row">
         <div className="num-block"><div className="num-val" style={{ color: "#9A7B4E" }}>{log.sold}</div><div className="num-lbl">delivered</div></div>
         <div className="num-block"><div className="num-val" style={{ color: "#B5715A" }}>{log.returned}</div><div className="num-lbl">returned</div></div>
+        {log.exchanged > 0 && <div className="num-block"><div className="num-val" style={{ color: "#F59E0B" }}>{log.exchanged}</div><div className="num-lbl">exchanged</div></div>}
       </div>
       {log.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{log.notes}</div>}
       {log.photo && <img src={log.photo} alt="entry" className="photo-preview" />}
+      {log.product && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "PO")}>⬇ PO</button>
+          <button className="btn btn-ghost btn-xs" onClick={() => printDoc(log, "PO")}>🖨 PO</button>
+          <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "DO")}>⬇ DO</button>
+          <button className="btn btn-ghost btn-xs" onClick={() => printDoc(log, "DO")}>🖨 DO</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1029,7 +1080,7 @@ function CatalogPage({ title, noun, icon, items, setItems, onAdd, onEdit }) {
                 <div className="cat-ic">{icon}</div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{x.name}</div>
-                  {hasStock && <div style={{ fontSize: 11, color: "#8A8073" }}>In stock: <strong style={{ color: low ? "#EF4444" : "#221E1A" }}>{x.stock}</strong> · alert ≤ {x.threshold}</div>}
+                  {hasStock && <div style={{ fontSize: 11, color: "#8A8073" }}>{x.price ? `$${x.price} · ` : ""}In stock: <strong style={{ color: low ? "#EF4444" : "#221E1A" }}>{x.stock}</strong> · alert ≤ {x.threshold}</div>}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1047,12 +1098,13 @@ function CatalogPage({ title, noun, icon, items, setItems, onAdd, onEdit }) {
 function CatalogModal({ noun, edit, items, setItems, onClose }) {
   const isProduct = noun === "Product";
   const [name, setName] = useState(edit?.name || "");
+  const [price, setPrice] = useState(edit?.price ?? "");
   const [stock, setStock] = useState(edit?.stock ?? "");
   const [threshold, setThreshold] = useState(edit?.threshold ?? "");
   const save = () => {
     const v = name.trim();
     if (!v) return;
-    const extra = isProduct ? { stock: Number(stock) || 0, threshold: Number(threshold) || 0 } : {};
+    const extra = isProduct ? { price: Number(price) || 0, stock: Number(stock) || 0, threshold: Number(threshold) || 0 } : {};
     if (edit) setItems(items.map(x => x.id === edit.id ? { ...x, name: v, ...extra } : x));
     else if (!items.some(x => x.name.toLowerCase() === v.toLowerCase())) setItems([...items, { id: Date.now(), name: v, ...extra }]);
     onClose();
@@ -1061,12 +1113,13 @@ function CatalogModal({ noun, edit, items, setItems, onClose }) {
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
       <div className="modal-handle" /><div className="modal-title">{edit ? `Edit ${noun}` : `Add ${noun}`}</div>
       <div className="form-group"><div className="field-label">{noun} Name</div><input className="field-input" autoFocus placeholder={`${noun} name`} value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === "Enter" && save()} /></div>
-      {isProduct && (
+      {isProduct && (<>
+        <div className="form-group"><div className="field-label">Unit Price (SGD)</div><input className="field-input" type="number" inputMode="decimal" placeholder="0.00" value={price} onChange={e => setPrice(e.target.value)} /></div>
         <div className="input-row-2">
           <div className="form-group"><div className="field-label">{edit ? "Current Stock" : "Opening Stock"}</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={stock} onChange={e => setStock(e.target.value)} /></div>
           <div className="form-group"><div className="field-label">Low-Stock Alert ≤</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={threshold} onChange={e => setThreshold(e.target.value)} /></div>
         </div>
-      )}
+      </>)}
       <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
     </div></div>
   );
@@ -1165,39 +1218,87 @@ function SystemPage({ logs, damages, docs, dealers, products, tasks, onLoad, onC
 }
 
 // ── MODALS ────────────────────────────────────────────────────────────────────
-function LogModal({ user, dealers, setDealers, products, setProducts, onSave, onClose }) {
-  const [dealer,setDealer]=useState(""); const [product,setProduct]=useState("");
-  const [sold,setSold]=useState(""); const [returned,setReturned]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
+function LogModal({ user, dealers, products, onSave, onClose }) {
+  const [dealer,setDealer]=useState("");
+  const [product,setProduct]=useState("");
+  const [delivered,setDelivered]=useState("");
+  const [returned,setReturned]=useState("");
+  const [exchanged,setExchanged]=useState("");
+  const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
+  const [err,setErr]=useState("");
   const hp=e=>handlePhoto(e,setPhoto);
+  const prod = products.find(p=>p.name===product);
+  const price = prod ? Number(prod.price)||0 : 0;
+  const amount = price * (Number(delivered)||0);
   const save=()=>{
-    if(!sold&&!returned)return;
-    const dl=dealer.trim(), pr=product.trim();
-    if(dl&&!dealers.some(d=>d.name.toLowerCase()===dl.toLowerCase())) setDealers([...dealers,{id:Date.now(),name:dl}]);
-    if(pr&&!products.some(p=>p.name.toLowerCase()===pr.toLowerCase())) setProducts([...products,{id:Date.now()+1,name:pr,stock:0,threshold:0}]);
-    onSave({dealer:dl,product:pr,sold:sold||0,returned:returned||0,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO(),time:fmtTime()});
+    if(!dealer||!product){ setErr("Please select a dealer and a product."); return; }
+    if(!delivered&&!returned&&!exchanged){ setErr("Enter a delivered, returned or exchanged quantity."); return; }
+    const num = String(Date.now()).slice(-6);
+    onSave({
+      dealer, product, price,
+      sold: Number(delivered)||0, returned: Number(returned)||0, exchanged: Number(exchanged)||0,
+      notes, photo, by:user.name, date:todayStr(), dateISO:todayISO(), time:fmtTime(),
+      poNo:"PO-"+num, doNo:"DO-"+num,
+    });
   };
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
-      <div className="modal-handle"/><div className="modal-title">Add Daily Entry</div>
-      <div className="input-row-2">
-        <div className="form-group"><div className="field-label">Dealer</div>
-          <input className="field-input" list="dealer-options" placeholder="Select or type…" value={dealer} onChange={e=>setDealer(e.target.value)}/>
-          <datalist id="dealer-options">{dealers.map(d=><option key={d.id} value={d.name}/>)}</datalist>
-        </div>
-        <div className="form-group"><div className="field-label">Product</div>
-          <input className="field-input" list="product-options" placeholder="Select or type…" value={product} onChange={e=>setProduct(e.target.value)}/>
-          <datalist id="product-options">{products.map(p=><option key={p.id} value={p.name}/>)}</datalist>
-        </div>
+      <div className="modal-handle"/><div className="modal-title">New Order</div>
+      <div className="form-group"><div className="field-label">Dealer</div>
+        <select className="field-select" value={dealer} onChange={e=>setDealer(e.target.value)}>
+          <option value="">Select an approved dealer…</option>
+          {dealers.map(d=><option key={d.id} value={d.name}>{d.name}</option>)}
+        </select>
       </div>
-      <div className="input-row-2">
-        <div className="form-group"><div className="field-label">Delivered</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={sold} onChange={e=>setSold(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Product</div>
+        <select className="field-select" value={product} onChange={e=>setProduct(e.target.value)}>
+          <option value="">Select a product…</option>
+          {products.map(p=><option key={p.id} value={p.name}>{p.name}{p.price?` — $${p.price}`:""}</option>)}
+        </select>
+      </div>
+      <div className="input-row-3">
+        <div className="form-group"><div className="field-label">Delivered</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={delivered} onChange={e=>setDelivered(e.target.value)}/></div>
         <div className="form-group"><div className="field-label">Returned</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={returned} onChange={e=>setReturned(e.target.value)}/></div>
+        <div className="form-group"><div className="field-label">Exchanged</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={exchanged} onChange={e=>setExchanged(e.target.value)}/></div>
+      </div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:11.5, color:"#8A8073" }}>
+        <span>Returned = damage · Exchanged = wrong size</span>
+        {amount>0 && <span style={{fontWeight:700, color:"#221E1A"}}>Amount ${amount.toLocaleString("en-SG",{minimumFractionDigits:2})}</span>}
       </div>
       <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="Any remarks..." value={notes} onChange={e=>setNotes(e.target.value)}/></div>
       <div className="form-group"><div className="field-label">Photo (optional)</div>
         <div className="photo-zone"><input type="file" accept="image/*" capture="environment" onChange={hp}/>{photo?<img src={photo} alt="p" className="photo-preview"/>:<><div className="photo-icon">📷</div><div className="photo-lbl">Tap to upload photo</div></>}</div>
       </div>
-      <div className="modal-actions"><button className="btn btn-primary" style={{flex:1}} onClick={save}>Save Entry</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+      {err && <div className="login-err">{err}</div>}
+      <div className="modal-actions"><button className="btn btn-primary" style={{flex:1}} onClick={save}>Create Order</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+function OrderCreatedModal({ order, onClose }) {
+  const card = (title, ref, kind) => (
+    <div className="card" style={{ boxShadow: "none" }}>
+      <div className="card-title" style={{ marginBottom: 4 }}>{title}</div>
+      <div style={{ fontSize: 11, color: "#8A8073", marginBottom: 10 }}>{ref}</div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={() => downloadDoc(order, kind)}>Download</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => printDoc(order, kind)}>Print</button>
+      </div>
+    </div>
+  );
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
+      <div className="modal-handle"/>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 40 }}>✅</div>
+        <div className="modal-title" style={{ textAlign: "center" }}>Order Created</div>
+        <div style={{ fontSize: 13, color: "#8A8073", marginTop: 4 }}>{order.sold} × {order.product} · {order.dealer}</div>
+      </div>
+      <div className="input-row-2">
+        {card("Purchase Order", order.poNo, "PO")}
+        {card("Delivery Order", order.doNo, "DO")}
+      </div>
+      <div className="modal-actions"><button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Done</button></div>
     </div></div>
   );
 }
