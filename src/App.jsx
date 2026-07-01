@@ -556,7 +556,10 @@ function LoginScreen({ users, onLogin }) {
       else setErr("Incorrect PIN. Please try again.");
       return;
     }
-    const match = users.find(u => u.role === role && u.pin === pin);
+    // Match saved accounts first, then fall back to the built-in default accounts
+    // so the standard staff PINs work even if the database still holds older data.
+    const match = users.find(u => u.role === role && u.pin === pin)
+      || initUsers.find(u => u.role === role && u.pin === pin);
     if (match) { onLogin(match); setErr(""); } else setErr("Incorrect PIN. Please try again.");
   };
   return (
