@@ -3,7 +3,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, R
 import { db, authReady } from "./services/firebase";
 import { doc, onSnapshot, setDoc } from "firebase/firestore";
 import { isCloudinaryConfigured, uploadImage } from "./services/cloudinary";
-import { downloadDoc, printDoc } from "./services/pdf";
+import { downloadDoc, printDoc, setCompanyInfo, downloadInvoice, printInvoice } from "./services/pdf";
 
 // Mirrors one collection to a single Firestore document ("appState/<key>") and keeps
 // it in sync across devices in real time. Setter matches useState (value or updater
@@ -188,6 +188,9 @@ const STYLES = `
   .badge-pending { background: #EFEAE1; color: var(--muted); }
   .badge-reviewed { background: var(--green-light); color: var(--green); }
   .badge-rejected { background: var(--red-light); color: var(--red); }
+  .badge-accepted { background: var(--orange-light); color: var(--orange); }
+  .badge-arrived { background: var(--primary-light); color: var(--primary-dark); }
+  .badge-completed { background: var(--green-light); color: var(--green); }
 
   /* LOG / DOC / DAMAGE ITEMS */
   .list-item { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; }
@@ -278,6 +281,18 @@ const STYLES = `
   .notice-avatar.acked { background: linear-gradient(135deg, #9A7B4E, #B5715A); opacity: 1; box-shadow: 0 0 0 2px var(--green-light); }
   .notice-check { position: absolute; bottom: -2px; right: -2px; background: var(--green); color: white; border-radius: 50%; width: 14px; height: 14px; font-size: 9px; display: flex; align-items: center; justify-content: center; border: 2px solid var(--surface); }
 
+  /* TARGETS */
+  .target-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .target-lbl { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .target-val { font-size: 13px; font-weight: 700; color: var(--text); }
+  .target-bar { height: 8px; border-radius: 6px; background: var(--bg); overflow: hidden; }
+  .target-fill { height: 100%; background: linear-gradient(90deg, #9A7B4E, #B5715A); border-radius: 6px; transition: width 0.3s; }
+
+  /* MY DEALERS */
+  .dealer-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-top: 10px; background: var(--bg); }
+  .dealer-hdr { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .dealer-map { width: 100%; height: 160px; border: 1px solid var(--border); border-radius: 10px; }
+
   /* SALES CALENDAR */
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
   .cal-wd { font-size: 10px; font-weight: 700; color: var(--muted); text-align: center; padding: 4px 0; text-transform: uppercase; }
@@ -357,18 +372,35 @@ const initUsers = [
   { id: 3, pin: "0002", role: "salesperson", name: "Raju" },
   { id: 4, pin: "0003", role: "salesperson", name: "Wei" },
   { id: 5, pin: "0004", role: "salesperson", name: "Marcus" },
+  { id: 6, pin: "5001", role: "installer", name: "BrightFix Installations" },
 ];
 
 // Built-in super admin (not stored in the database, so it always works).
 // Change this PIN to whatever you like.
 const SUPER_PIN = "9999";
 
+// Company details shown on PO/DO/Tax Invoice documents — edit in SuperAdmin → Company Settings.
+const DEFAULT_COMPANY_SETTINGS = {
+  name: "Velle Pte. Ltd.",
+  addr1: "55 Lorong L Telok Kurau",
+  addr2: "#02-57 Bright Centre, Singapore",
+  phone: "+65 9145 7739",
+  email: "",
+  website: "",
+  uen: "202439003W",
+  gst: "202439003W",
+};
+
+// Shared running PO/DO number series — edit in SuperAdmin → Company Settings.
+// Every new Sales Order or Installer Job draws the next number from here.
+const DEFAULT_DOC_COUNTERS = { poPrefix: "PO-", doPrefix: "DO-", poNext: 123031, doNext: 123031 };
+
 // Starter dealer & product lists — edit these on the Dealers / Products pages.
 const initDealers = [
-  { id: 1, name: "One9supplies Pte Ltd" },
-  { id: 2, name: "ABC Construction" },
-  { id: 3, name: "BuildRight Pte Ltd" },
-  { id: 4, name: "Summit Renovation" },
+  { id: 1, name: "One9supplies Pte Ltd", contactName: "Jason Lim", contactPhone: "9123 4567", address: "21 Woodlands Close, #03-15, Singapore 737854", salesperson: "Ali", createdAt: "2026-06-01T09:00:00.000Z" },
+  { id: 2, name: "ABC Construction", contactName: "Priya Nair", contactPhone: "8234 5678", address: "5 Toa Payoh Industrial Park, #02-08, Singapore 319058", salesperson: "Ali", createdAt: "2026-06-03T09:00:00.000Z" },
+  { id: 3, name: "BuildRight Pte Ltd", contactName: "Wong Kah Meng", contactPhone: "9345 6789", address: "88 Kaki Bukit Road 4, #04-22, Singapore 417839", salesperson: "Raju", createdAt: "2026-06-10T09:00:00.000Z" },
+  { id: 4, name: "Summit Renovation", contactName: "Farah Aziz", contactPhone: "8456 7890", address: "12 Ubi Crescent, #01-05, Singapore 408563", salesperson: "Wei", createdAt: "2026-06-20T09:00:00.000Z" },
 ];
 const initProducts = [
   { id: 1, name: "150mm S-Trap Model One Toilet Bowl", price: 198, stock: 40, threshold: 10 },
@@ -387,6 +419,46 @@ const initTasks = [
   { id: 2, title: "Deliver 5 One-Piece WC to Summit", type: "Task", details: "", date: "01 Jul 2026", dateISO: "2026-07-01", by: "Admin", status: "open" },
 ];
 
+// Per-salesperson targets, set by Admin: new dealers to approach each week, and a monthly sales dollar target.
+const initTargets = [
+  { id: 1, salesperson: "Ali", newDealerWeekly: 2, salesMonthly: 15000 },
+  { id: 2, salesperson: "Raju", newDealerWeekly: 2, salesMonthly: 15000 },
+  { id: 3, salesperson: "Wei", newDealerWeekly: 2, salesMonthly: 15000 },
+  { id: 4, salesperson: "Marcus", newDealerWeekly: 2, salesMonthly: 15000 },
+];
+
+// Expense claims (e.g. treats bought for a dealer meetup) — need Admin approval before counting as an expense.
+const seedClaims = [
+  { id: 960001, amount: "45.00", dealer: "ABC Construction", notes: "Coffee & pastries for showroom meetup", photo: null, by: "Ali", date: "20 Jun 2026", dateISO: "2026-06-20", status: "pending" },
+];
+
+// Finance: money paid out to restock suppliers, and generated monthly dealer tax invoices (AR).
+const seedSupplierPayments = [
+  { id: 970001, supplier: "WC Supplies Pte Ltd", amount: "8200.00", notes: "June restock — toilet bowls & fittings", date: "10 Jun 2026", dateISO: "2026-06-10", by: "Terence" },
+];
+const seedInvoices = [];
+const GST_RATE = 0.09;
+const daysOverdue = dueISO => Math.floor((Date.now() - new Date(dueISO + "T00:00:00").getTime()) / 86400000);
+const agingBucket = days => days <= 0 ? "Not due" : days <= 30 ? "1–30 days" : days <= 60 ? "31–60 days" : days <= 90 ? "61–90 days" : "90+ days";
+
+// Installation jobs — admin creates & assigns to an installer company, who accepts
+// and completes them with arrival (geo+time stamped) and completion photos.
+const JOB_STATUS_LABEL = { pending: "Pending Acceptance", accepted: "Accepted", arrived: "Arrived On-Site", completed: "Completed" };
+const seedInstallJobs = [
+  { id: 940001, poNo: "PO-123031", doNo: "DO-123031", product: "150mm S-Trap Model One Toilet Bowl", qty: 2,
+    address: "12 Bishan Street 22, #05-10, Singapore 570012", collectPoint: "Velle Warehouse, 55 Lorong L Telok Kurau",
+    date: "05 Jul 2026", dateISO: "2026-07-05", timeFrom: "14:00", timeTo: "17:00",
+    installer: "BrightFix Installations", status: "pending", createdBy: "Terence", createdAt: "2026-07-01T09:00:00.000Z",
+    arrivalPhoto: null, arrivalMeta: null, completionPhoto: null, completionMeta: null },
+];
+const fmt12h = hhmm => {
+  if (!hhmm) return "—";
+  const [h, m] = hhmm.split(":").map(Number);
+  const ap = h >= 12 ? "PM" : "AM";
+  const hh = ((h + 11) % 12) + 1;
+  return `${hh}:${String(m).padStart(2, "0")} ${ap}`;
+};
+
 const fmtDate = d => d.toLocaleDateString("en-SG", { day: "2-digit", month: "short", year: "numeric" });
 const fmtTime = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 const todayStr = () => fmtDate(new Date());
@@ -402,12 +474,15 @@ const periodStartISO = (p) => {
 };
 const sgd = n => "$" + Number(n || 0).toLocaleString("en-SG", { maximumFractionDigits: 0 });
 
+const SALES_ROLES = ["salesperson", "admin", "superadmin"];
 const NAV = [
-  { id: "dashboard", label: "Dashboard", icon: "📊", admin: false },
-  { id: "daily", label: "Orders", icon: "📝", admin: false },
-  { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false },
-  { id: "documents", label: "Documents", icon: "📄", admin: false },
-  { id: "tasks", label: "Tasks & Servicing", icon: "🧰", admin: false },
+  { id: "dashboard", label: "Dashboard", icon: "📊", admin: false, roles: SALES_ROLES },
+  { id: "daily", label: "Orders", icon: "📝", admin: false, roles: SALES_ROLES },
+  { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false, roles: SALES_ROLES },
+  { id: "documents", label: "Documents", icon: "📄", admin: false, roles: SALES_ROLES },
+  { id: "tasks", label: "Tasks & Servicing", icon: "🧰", admin: false, roles: SALES_ROLES },
+  { id: "claims", label: "My Claims", icon: "🧾", admin: false, roles: SALES_ROLES },
+  { id: "install-jobs-mine", label: "My Jobs", icon: "🛠️", admin: false, roles: ["installer"] },
   { id: "trash", label: "Trash", icon: "🗑️", admin: false },
   { id: "reports", label: "Reports", icon: "📈", admin: true },
   { id: "damage-review", label: "Damage Review", icon: "🔍", admin: true },
@@ -415,7 +490,13 @@ const NAV = [
   { id: "stock", label: "Stock Summary", icon: "📦", admin: true },
   { id: "dealers", label: "Dealers", icon: "🤝", admin: true },
   { id: "products", label: "Products", icon: "🛁", admin: true },
+  { id: "install-jobs", label: "Installation Jobs", icon: "🛠️", admin: true },
+  { id: "claims-review", label: "Claims Review", icon: "🧾", admin: true },
+  { id: "targets", label: "Sales Targets", icon: "🎯", admin: true },
+  { id: "finance", label: "Finance", icon: "💰", admin: true },
   { id: "users", label: "User Management", icon: "👥", admin: true },
+  { id: "company-settings", label: "Company Settings", icon: "🏢", admin: true, super: true },
+  { id: "balance-sheet", label: "Balance Sheet", icon: "📒", admin: true, super: true },
   { id: "system", label: "Data Management", icon: "🗄️", admin: true, super: true },
 ];
 
@@ -470,7 +551,8 @@ export default function App() {
     if (user) localStorage.setItem("velle_user", JSON.stringify(user));
     else localStorage.removeItem("velle_user");
   }, [user]);
-  const [page, setPage] = useState("dashboard");
+  // Installers land on their job list, not the sales dashboard.
+  const [page, setPage] = useState(() => (user?.role === "installer" ? "install-jobs-mine" : "dashboard"));
   const [navOpen, setNavOpen] = useState(false);
   const [users, setUsers] = usePersistentState("users", initUsers);
   const [logs, setLogs] = usePersistentState("logs", seedLogs);
@@ -488,6 +570,16 @@ export default function App() {
   const [lastOrder, setLastOrder] = useState(null);
   const [trash, setTrash] = usePersistentState("trash", []);
   const [notices, setNotices] = usePersistentState("notices", initNotices);
+  const [companySettings, setCompanySettings] = usePersistentState("companySettings", DEFAULT_COMPANY_SETTINGS);
+  const [docCounters, setDocCounters] = usePersistentState("docCounters", DEFAULT_DOC_COUNTERS);
+  const [installJobs, setInstallJobs] = usePersistentState("installJobs", seedInstallJobs);
+  const [targets, setTargets] = usePersistentState("targets", initTargets);
+  const [claims, setClaims] = usePersistentState("claims", seedClaims);
+  const [supplierPayments, setSupplierPayments] = usePersistentState("supplierPayments", seedSupplierPayments);
+  const [invoices, setInvoices] = usePersistentState("invoices", seedInvoices);
+
+  // Keep the PDF generator's company block in sync with SuperAdmin's settings.
+  useEffect(() => { setCompanyInfo(companySettings); }, [companySettings]);
 
   // Auto-purge trash items older than 90 days. Runs whenever trash changes
   // (including on first load), and is a no-op once nothing is expired.
@@ -499,19 +591,56 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trash]);
 
+  // Shared running PO/DO series (set in SuperAdmin → Company Settings). Used by both
+  // Sales Orders and Installer Jobs so every document draws from one running number.
+  const allocateDocNumbers = () => {
+    const poNo = `${docCounters.poPrefix}${docCounters.poNext}`;
+    const doNo = `${docCounters.doPrefix}${docCounters.doNext}`;
+    setDocCounters({ ...docCounters, poNext: docCounters.poNext + 1, doNext: docCounters.doNext + 1 });
+    return { poNo, doNo };
+  };
+
   // Saving a New Order: record it and adjust warehouse stock (delivered out, returned back).
   const handlePurchase = e => {
-    setLogs([e, ...logs]);
+    const withDocs = { ...e, ...allocateDocNumbers() };
+    setLogs([withDocs, ...logs]);
     const delivered = Number(e.sold) || 0;
     const returned = Number(e.returned) || 0;
     if (e.product && (delivered || returned)) {
       setProducts(ps => ps.map(p => p.name.toLowerCase() === e.product.toLowerCase() ? { ...p, stock: (Number(p.stock) || 0) - delivered + returned } : p));
     }
-    setLastOrder(e);
+    setLastOrder(withDocs);
     setModal("order-created");
   };
 
-  if (!user) return <LoginScreen users={users} onLogin={u => { setUser(u); setPage("dashboard"); }} />;
+  // ── INSTALLATION JOBS ──
+  const createInstallJob = payload => {
+    const job = { id: Date.now(), ...allocateDocNumbers(), status: "pending", createdBy: user.name, createdAt: new Date().toISOString(), arrivalPhoto: null, arrivalMeta: null, completionPhoto: null, completionMeta: null, ...payload };
+    setInstallJobs([job, ...installJobs]);
+    setModal(null);
+  };
+  const acceptInstallJob = jobId => setInstallJobs(installJobs.map(j => j.id === jobId ? { ...j, status: "accepted", acceptedAt: new Date().toISOString() } : j));
+  // Arrival photo: captures the unit number, timestamp and (if permitted) GPS location.
+  const captureArrivalJobPhoto = (jobId, file) => {
+    const finish = (photoUrl, coords) => setInstallJobs(jobs => jobs.map(j => j.id === jobId ? {
+      ...j, status: "arrived", arrivalPhoto: photoUrl,
+      arrivalMeta: { takenAt: new Date().toISOString(), lat: coords?.latitude ?? null, lng: coords?.longitude ?? null, accuracy: coords?.accuracy ?? null },
+    } : j));
+    const withPhoto = photoUrl => {
+      if (navigator.geolocation) navigator.geolocation.getCurrentPosition(pos => finish(photoUrl, pos.coords), () => finish(photoUrl, null), { timeout: 8000, enableHighAccuracy: true });
+      else finish(photoUrl, null);
+    };
+    if (isCloudinaryConfigured) uploadImage(file).then(withPhoto).catch(() => { const r = new FileReader(); r.onload = ev => withPhoto(ev.target.result); r.readAsDataURL(file); });
+    else { const r = new FileReader(); r.onload = ev => withPhoto(ev.target.result); r.readAsDataURL(file); }
+  };
+  // Completion photo: the installed product, once the job is done.
+  const captureCompletionJobPhoto = (jobId, file) => {
+    const finish = photoUrl => setInstallJobs(jobs => jobs.map(j => j.id === jobId ? { ...j, status: "completed", completionPhoto: photoUrl, completionMeta: { takenAt: new Date().toISOString() } } : j));
+    if (isCloudinaryConfigured) uploadImage(file).then(finish).catch(() => { const r = new FileReader(); r.onload = ev => finish(ev.target.result); r.readAsDataURL(file); });
+    else { const r = new FileReader(); r.onload = ev => finish(ev.target.result); r.readAsDataURL(file); }
+  };
+
+  if (!user) return <LoginScreen users={users} onLogin={u => { setUser(u); setPage(u.role === "installer" ? "install-jobs-mine" : "dashboard"); }} />;
 
   const go = id => { setPage(id); setNavOpen(false); };
   const isSuperAdmin = user.role === "superadmin";
@@ -522,11 +651,13 @@ export default function App() {
     setUsers(initUsers);
     setLogs(seedLogs); setDamages(seedDamages); setDocs(seedDocs);
     setDealers(initDealers); setProducts(initProducts); setTasks(initTasks);
-    setTrash([]); setNotices(initNotices);
+    setTrash([]); setNotices(initNotices); setInstallJobs(seedInstallJobs); setTargets(initTargets); setClaims(seedClaims);
+    setSupplierPayments(seedSupplierPayments); setInvoices(seedInvoices);
   };
   const clearAllData = () => {
     setLogs([]); setDamages([]); setDocs([]); setDealers([]); setProducts([]); setTasks([]);
-    setTrash([]); setNotices([]);
+    setTrash([]); setNotices([]); setInstallJobs([]); setTargets([]); setClaims([]);
+    setSupplierPayments([]); setInvoices([]);
   };
 
   // ── TRASH ──
@@ -554,6 +685,33 @@ export default function App() {
     return { ...n, ackBy: [...(n.ackBy || []), { name: user.name, at: new Date().toISOString() }] };
   }));
 
+  // ── FINANCE ──
+  const addSupplierPayment = payload => setSupplierPayments([{ id: Date.now(), by: user.name, ...payload }, ...supplierPayments]);
+  // Builds a tax invoice for one dealer's net orders in a given month, saves it, and returns it for immediate PDF download.
+  const generateInvoice = (dealer, monthISO) => {
+    const monthLogs = logs.filter(l => l.dealer === dealer && l.dateISO && l.dateISO.slice(0, 7) === monthISO);
+    const lines = monthLogs.map(l => {
+      const qty = (Number(l.sold) || 0) - (Number(l.returned) || 0);
+      const price = Number(l.price) || 0;
+      return qty > 0 ? { poNo: l.poNo, doNo: l.doNo, model: l.product, qty, price, amount: qty * price } : null;
+    }).filter(Boolean);
+    const subtotal = lines.reduce((s, l) => s + l.amount, 0);
+    const gst = subtotal * GST_RATE;
+    const total = subtotal + gst;
+    const issueDateISO = todayISO();
+    const due = new Date(); due.setDate(due.getDate() + 30);
+    const monthLabel = new Date(monthISO + "-01").toLocaleDateString("en-SG", { month: "long", year: "numeric" });
+    const invoice = {
+      id: Date.now(), refNo: `INV-${monthISO.replace("-", "")}-${String(Date.now()).slice(-4)}`,
+      dealer, monthISO, monthLabel, lines, subtotal, gst, gstRate: GST_RATE, total,
+      issueDate: todayStr(), issueDateISO, dueDate: fmtDate(due), dueDateISO: due.toISOString().split("T")[0],
+      status: "unpaid", paidDateISO: null, by: user.name,
+    };
+    setInvoices([invoice, ...invoices]);
+    return invoice;
+  };
+  const markInvoicePaid = id => setInvoices(invoices.map(i => i.id === id ? { ...i, status: "paid", paidDateISO: todayISO() } : i));
+
   return (
     <>
       <style>{STYLES}</style>
@@ -573,7 +731,7 @@ export default function App() {
           </div>
           <div style={{ overflowY: "auto", flex: 1, paddingBottom: 8 }}>
             <div className="nav-section">General</div>
-            {NAV.filter(n => !n.admin).map(n => (
+            {NAV.filter(n => !n.admin && (!n.roles || n.roles.includes(user.role))).map(n => (
               <button key={n.id} className={`nav-item ${page === n.id ? "active" : ""}`} onClick={() => go(n.id)}>
                 <span className="nav-icon">{n.icon}</span>{n.label}
               </button>
@@ -596,7 +754,7 @@ export default function App() {
             <div className="topbar-date">{todayStr()}</div>
           </div>
 
-          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("products")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
+          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("products")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
           {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} />}
           {page === "damage" && <DamagePage damages={damages} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} />}
           {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} onDelete={deleteDoc} />}
@@ -604,10 +762,18 @@ export default function App() {
           {page === "damage-review" && <DamageReviewPage damages={damages} setDamages={setDamages} />}
           {page === "doc-overview" && <DocOverviewPage docs={docs} />}
           {page === "stock" && <StockPage logs={logs} />}
-          {page === "dealers" && <CatalogPage title="Dealers" noun="Dealer" icon="🤝" kind="dealer" items={dealers} setItems={setDealers} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} onTrash={trashItem} />}
+          {page === "dealers" && <DealersPage dealers={dealers} setDealers={setDealers} users={users} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} onTrash={trashItem} />}
           {page === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" kind="product" items={products} setItems={setProducts} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} />}
           {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} onTrash={trashItem} />}
           {page === "trash" && <TrashPage trash={trash} me={user.name} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onRestore={restoreTrash} onPermanentDelete={permanentDelete} onEmpty={emptyTrash} />}
+          {page === "install-jobs" && <InstallJobsPage jobs={installJobs} onAdd={() => setModal("install-job")} />}
+          {page === "install-jobs-mine" && <InstallerJobsPage jobs={installJobs} me={user.name} onAccept={acceptInstallJob} onArrivalPhoto={captureArrivalJobPhoto} onCompletionPhoto={captureCompletionJobPhoto} />}
+          {page === "targets" && <TargetsPage targets={targets} setTargets={setTargets} users={users} />}
+          {page === "claims" && <ClaimsPage claims={claims} me={user.name} onAdd={() => setModal("claim")} />}
+          {page === "claims-review" && <ClaimsReviewPage claims={claims} setClaims={setClaims} />}
+          {page === "finance" && <FinancePage dealers={dealers} claims={claims} invoices={invoices} supplierPayments={supplierPayments} onGenerateInvoice={generateInvoice} onMarkPaid={markInvoicePaid} onAddSupplierPayment={addSupplierPayment} />}
+          {page === "balance-sheet" && isSuperAdmin && <BalanceSheetPage invoices={invoices} supplierPayments={supplierPayments} claims={claims} />}
+          {page === "company-settings" && isSuperAdmin && <CompanySettingsPage settings={companySettings} setSettings={setCompanySettings} counters={docCounters} setCounters={setDocCounters} />}
           {page === "system" && isSuperAdmin && <SystemPage logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} trash={trash} notices={notices} onLoad={loadTestData} onClear={clearAllData} />}
           {page === "users" && <UserMgmtPage users={users} setUsers={setUsers} currentUser={user} onAdd={() => { setEditUser(null); setModal("user"); }} onEdit={u => { setEditUser(u); setModal("user"); }} onTrash={trashItem} />}
         </div>
@@ -618,8 +784,10 @@ export default function App() {
       {modal === "damage" && <DamageModal user={user} onSave={e => { setDamages([{ id: Date.now(), ...e }, ...damages]); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([{ id: Date.now(), ...e }, ...docs]); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "notice" && <NoticeModal onSave={(title, message) => { postNotice(title, message); setModal(null); }} onClose={() => setModal(null)} />}
+      {modal === "install-job" && <InstallJobModal users={users} products={products} onSave={createInstallJob} onClose={() => setModal(null)} />}
+      {modal === "claim" && <ClaimModal user={user} dealers={dealers} onSave={e => { setClaims([{ id: Date.now(), ...e, status: "pending" }, ...claims]); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={() => setModal(null)} />}
-      {modal === "dealer" && <CatalogModal noun="Dealer" edit={editDealer} items={dealers} setItems={setDealers} onClose={() => setModal(null)} />}
+      {modal === "dealer" && <DealerModal edit={editDealer} dealers={dealers} setDealers={setDealers} users={users} isAdmin={isAdmin} me={user.name} onClose={() => setModal(null)} />}
       {modal === "product" && <CatalogModal noun="Product" edit={editProduct} items={products} setItems={setProducts} onClose={() => setModal(null)} />}
       {modal === "task" && <TaskModal user={user} edit={editTask} tasks={tasks} setTasks={setTasks} onClose={() => setModal(null)} />}
     </>
@@ -671,6 +839,7 @@ function LoginScreen({ users, onLogin }) {
               <div className="field-label">I am a</div>
               <div className="role-row">
                 <button className={`role-btn ${role === "salesperson" ? "active" : ""}`} onClick={() => setRole("salesperson")}>Salesperson</button>
+                <button className={`role-btn ${role === "installer" ? "active" : ""}`} onClick={() => setRole("installer")}>Installer</button>
                 <button className={`role-btn ${role === "admin" ? "active" : ""}`} onClick={() => setRole("admin")}>Admin</button>
               </div>
             </div>
@@ -690,7 +859,7 @@ function LoginScreen({ users, onLogin }) {
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function DashboardPage({ logs, damages, docs, products, users, notices, isAdmin, me, onAdd, onGoStock, onAck, onPostNotice }) {
+function DashboardPage({ logs, damages, docs, products, users, notices, dealers, targets, isAdmin, me, onAdd, onGoStock, onAck, onPostNotice }) {
   const [period, setPeriod] = useState("day");
   // Salespeople only ever see their own orders; admins see everything.
   const scoped = isAdmin ? logs : logs.filter(l => l.by === me);
@@ -707,6 +876,14 @@ function DashboardPage({ logs, damages, docs, products, users, notices, isAdmin,
   const exchanged = todayLogs.reduce((s, l) => s + Number(l.exchanged || 0), 0);
   const lowStock = (products || []).filter(p => Number(p.stock) <= Number(p.threshold));
   const pendingDmg = damages.filter(d => d.status === "pending").length;
+
+  // My targets: new dealers approached this week vs. weekly target, sales this month vs. monthly target.
+  const myTarget = (targets || []).find(t => t.salesperson === me);
+  const weekStartISO = periodStartISO("week");
+  const monthStartISO = periodStartISO("month");
+  const newDealersThisWeek = (dealers || []).filter(d => d.salesperson === me && d.createdAt && d.createdAt.split("T")[0] >= weekStartISO).length;
+  const monthLogs = scoped.filter(l => l.dateISO >= monthStartISO);
+  const salesThisMonth = monthLogs.reduce((s, l) => s + (Number(l.sold) - Number(l.returned || 0)) * Number(l.price || 0), 0);
 
   // Last 7 days bar chart data
   const last7 = (() => {
@@ -770,6 +947,24 @@ function DashboardPage({ logs, damages, docs, products, users, notices, isAdmin,
       )}
 
       <NoticeBoard notices={notices} users={users} me={me} isAdmin={isAdmin} onAck={onAck} onPost={onPostNotice} />
+
+      {!isAdmin && myTarget && (
+        <div className="card">
+          <div className="card-title">🎯 My Targets</div>
+          <div className="target-row">
+            <div className="target-lbl">New dealers this week</div>
+            <div className="target-val">{newDealersThisWeek} / {myTarget.newDealerWeekly}</div>
+          </div>
+          <div className="target-bar"><div className="target-fill" style={{ width: `${Math.min(100, myTarget.newDealerWeekly ? (newDealersThisWeek / myTarget.newDealerWeekly) * 100 : 0)}%` }} /></div>
+          <div className="target-row" style={{ marginTop: 12 }}>
+            <div className="target-lbl">Sales this month</div>
+            <div className="target-val">{sgd(salesThisMonth)} / {sgd(myTarget.salesMonthly)}</div>
+          </div>
+          <div className="target-bar"><div className="target-fill" style={{ width: `${Math.min(100, myTarget.salesMonthly ? (salesThisMonth / myTarget.salesMonthly) * 100 : 0)}%` }} /></div>
+        </div>
+      )}
+
+      {!isAdmin && <MyDealersCard dealers={dealers} logs={scoped} me={me} />}
 
       <SalesCalendar logs={scoped} isAdmin={isAdmin} />
 
@@ -968,6 +1163,43 @@ function NoticeModal({ onSave, onClose }) {
       <div className="form-group"><div className="field-label">Message</div><textarea className="field-input" rows={4} style={{ resize: "vertical", fontFamily: "var(--font)" }} placeholder="Details for the team..." value={message} onChange={e => setMessage(e.target.value)} /></div>
       <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Post Notice</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
     </div></div>
+  );
+}
+
+// ── MY DEALERS (sales dashboard) ──────────────────────────────────────────────
+function MyDealersCard({ dealers, logs, me }) {
+  const mine = dealers.filter(d => d.salesperson === me);
+  return (
+    <div className="card">
+      <div className="card-title">🤝 My Dealers</div>
+      {mine.length === 0 ? (
+        <div className="empty" style={{ padding: "20px 0" }}><div className="empty-lbl">No dealers assigned to you yet — ask Admin to assign one.</div></div>
+      ) : mine.map(d => {
+        const dealerLogs = logs.filter(l => l.dealer === d.name);
+        const delivered = dealerLogs.reduce((s, l) => s + Number(l.sold), 0);
+        const value = dealerLogs.reduce((s, l) => s + (Number(l.sold) - Number(l.returned || 0)) * Number(l.price || 0), 0);
+        return (
+          <div key={d.id} className="dealer-card">
+            <div className="dealer-hdr">
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>{d.name}</div>
+                {d.contactName && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.contactName}{d.contactPhone ? ` · ${d.contactPhone}` : ""}</div>}
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#9A7B4E" }}>{sgd(value)}</div>
+                <div style={{ fontSize: 10, color: "#8A8073" }}>{delivered} units delivered</div>
+              </div>
+            </div>
+            {d.address && (
+              <>
+                <div style={{ fontSize: 12, color: "#8A8073", margin: "8px 0 6px" }}>📍 {d.address}</div>
+                <iframe className="dealer-map" title={`Map for ${d.name}`} src={mapEmbedUrl(d.address)} loading="lazy" />
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1401,6 +1633,79 @@ function CatalogModal({ noun, edit, items, setItems, onClose }) {
   );
 }
 
+// ── DEALERS ────────────────────────────────────────────────────────────────────
+// No API key needed — Google's basic embed map works from a plain address query.
+const mapEmbedUrl = address => `https://www.google.com/maps?q=${encodeURIComponent(address)}&output=embed`;
+
+function DealersPage({ dealers, setDealers, onAdd, onEdit, onTrash }) {
+  const remove = d => { setDealers(dealers.filter(x => x.id !== d.id)); onTrash("dealer", d); };
+  return (
+    <div className="content">
+      <div className="section-hdr"><div className="section-title">Dealers ({dealers.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add Dealer</button></div>
+      {dealers.length === 0
+        ? <div className="empty"><div className="empty-icon">🤝</div><div className="empty-lbl">No dealers yet. Add your first one.</div></div>
+        : dealers.map(d => (
+          <div className="list-item" key={d.id}>
+            <div className="item-meta">
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div className="cat-ic">🤝</div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{d.name}</div>
+                  {d.contactName && <div style={{ fontSize: 11, color: "#8A8073" }}>{d.contactName}{d.contactPhone ? ` · ${d.contactPhone}` : ""}</div>}
+                </div>
+              </div>
+              <span className="entry-tag">👤 {d.salesperson || "Unassigned"}</span>
+            </div>
+            {d.address && <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {d.address}</div>}
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className="btn btn-ghost btn-xs" onClick={() => onEdit(d)}>Edit</button>
+              <button className="btn btn-danger btn-xs" onClick={() => remove(d)}>Remove</button>
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function DealerModal({ edit, dealers, setDealers, users, isAdmin, me, onClose }) {
+  const [name, setName] = useState(edit?.name || "");
+  const [contactName, setContactName] = useState(edit?.contactName || "");
+  const [contactPhone, setContactPhone] = useState(edit?.contactPhone || "");
+  const [address, setAddress] = useState(edit?.address || "");
+  const [salesperson, setSalesperson] = useState(edit?.salesperson || (isAdmin ? "" : me));
+  const salespeople = users.filter(u => u.role === "salesperson");
+  const save = () => {
+    const v = name.trim();
+    if (!v) return;
+    const extra = { name: v, contactName, contactPhone, address, salesperson };
+    if (edit) setDealers(dealers.map(x => x.id === edit.id ? { ...x, ...extra } : x));
+    else if (!dealers.some(x => x.name.toLowerCase() === v.toLowerCase())) setDealers([...dealers, { id: Date.now(), createdAt: new Date().toISOString(), ...extra }]);
+    onClose();
+  };
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-handle" /><div className="modal-title">{edit ? "Edit Dealer" : "Add Dealer"}</div>
+      <div className="form-group"><div className="field-label">Dealer / Company Name</div><input className="field-input" autoFocus placeholder="Dealer name" value={name} onChange={e => setName(e.target.value)} /></div>
+      <div className="input-row-2">
+        <div className="form-group"><div className="field-label">Contact Person</div><input className="field-input" placeholder="Name" value={contactName} onChange={e => setContactName(e.target.value)} /></div>
+        <div className="form-group"><div className="field-label">Contact Number</div><input className="field-input" placeholder="9123 4567" value={contactPhone} onChange={e => setContactPhone(e.target.value)} /></div>
+      </div>
+      <div className="form-group"><div className="field-label">Showroom Address</div><input className="field-input" placeholder="Full address for the map" value={address} onChange={e => setAddress(e.target.value)} /></div>
+      <div className="form-group"><div className="field-label">Assigned Salesperson</div>
+        {isAdmin ? (
+          <select className="field-select" value={salesperson} onChange={e => setSalesperson(e.target.value)}>
+            <option value="">Unassigned</option>
+            {salespeople.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+          </select>
+        ) : (
+          <div style={{ fontSize: 13, fontWeight: 600, padding: "10px 0" }}>{salesperson || me} <span style={{ fontSize: 11, color: "#8A8073", fontWeight: 400 }}>(only Admin can reassign)</span></div>
+        )}
+      </div>
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
 // ── TASKS / SERVICING ─────────────────────────────────────────────────────────
 function TasksPage({ tasks, setTasks, onAdd, onEdit, onTrash }) {
   const toggle = id => setTasks(tasks.map(t => t.id === id ? { ...t, status: t.status === "done" ? "open" : "done" } : t));
@@ -1521,6 +1826,563 @@ function TrashPage({ trash, me, isAdmin, isSuperAdmin, onRestore, onPermanentDel
   );
 }
 
+// ── INSTALLATION JOBS ──────────────────────────────────────────────────────────
+function InstallJobsPage({ jobs, onAdd }) {
+  return (
+    <div className="content">
+      <div className="section-hdr"><div className="section-title">Installation Jobs ({jobs.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Job</button></div>
+      {jobs.length === 0 ? <div className="empty"><div className="empty-icon">🛠️</div><div className="empty-lbl">No installation jobs yet.</div></div>
+        : jobs.map(j => (
+          <div className="list-item" key={j.id}>
+            <div className="item-meta">
+              <div><div style={{ fontSize: 14, fontWeight: 700 }}>{j.product}</div><div style={{ fontSize: 11, color: "#8A8073" }}>Qty {j.qty} · {j.poNo} / {j.doNo}</div></div>
+              <span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span>
+            </div>
+            <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {j.address}</div>
+            <div style={{ fontSize: 12, color: "#8A8073" }}>📦 Collect: {j.collectPoint || "—"}</div>
+            <div style={{ fontSize: 12, color: "#8A8073" }}>🗓 {j.date} · {fmt12h(j.timeFrom)}–{fmt12h(j.timeTo)}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#9A7B4E" }}>Installer: {j.installer}</div>
+            {j.arrivalPhoto && (
+              <>
+                <img src={j.arrivalPhoto} alt="arrival" className="photo-preview" />
+                <div style={{ fontSize: 11, color: "#8A8073" }}>
+                  Arrived {new Date(j.arrivalMeta.takenAt).toLocaleString("en-SG")}
+                  {j.arrivalMeta.lat != null ? ` · ${j.arrivalMeta.lat.toFixed(5)}, ${j.arrivalMeta.lng.toFixed(5)}` : " · location unavailable"}
+                </div>
+              </>
+            )}
+            {j.completionPhoto && (
+              <>
+                <img src={j.completionPhoto} alt="completed install" className="photo-preview" />
+                <div style={{ fontSize: 11, color: "#8A8073" }}>Completed {new Date(j.completionMeta.takenAt).toLocaleString("en-SG")}</div>
+              </>
+            )}
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function InstallJobModal({ users, products, onSave, onClose }) {
+  const installers = users.filter(u => u.role === "installer");
+  const [product, setProduct] = useState("");
+  const [qty, setQty] = useState("");
+  const [address, setAddress] = useState("");
+  const [collectPoint, setCollectPoint] = useState("");
+  const [dateISO, setDateISO] = useState(todayISO());
+  const [timeFrom, setTimeFrom] = useState("");
+  const [timeTo, setTimeTo] = useState("");
+  const [installer, setInstaller] = useState("");
+  const [err, setErr] = useState("");
+  const save = () => {
+    if (!product || !qty || !address || !dateISO || !timeFrom || !timeTo || !installer) { setErr("Please fill in every field."); return; }
+    onSave({ product, qty: Number(qty) || 0, address, collectPoint, date: fmtDate(new Date(dateISO + "T00:00:00")), dateISO, timeFrom, timeTo, installer });
+  };
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-handle" /><div className="modal-title">New Installation Job</div>
+      <div className="form-group"><div className="field-label">Product to Install</div>
+        <select className="field-select" value={product} onChange={e => setProduct(e.target.value)}>
+          <option value="">Select a product…</option>
+          {products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+        </select>
+      </div>
+      <div className="form-group"><div className="field-label">Quantity</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={qty} onChange={e => setQty(e.target.value)} /></div>
+      <div className="form-group"><div className="field-label">Jobsite Address</div><input className="field-input" placeholder="Full installation address" value={address} onChange={e => setAddress(e.target.value)} /></div>
+      <div className="form-group"><div className="field-label">Collection Point</div><input className="field-input" placeholder="Where to collect the goods (e.g. warehouse)" value={collectPoint} onChange={e => setCollectPoint(e.target.value)} /></div>
+      <div className="input-row-3">
+        <div className="form-group"><div className="field-label">Date</div><input className="field-input" type="date" value={dateISO} onChange={e => setDateISO(e.target.value)} /></div>
+        <div className="form-group"><div className="field-label">From</div><input className="field-input" type="time" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} /></div>
+        <div className="form-group"><div className="field-label">To</div><input className="field-input" type="time" value={timeTo} onChange={e => setTimeTo(e.target.value)} /></div>
+      </div>
+      <div className="form-group"><div className="field-label">Assign Installer</div>
+        <select className="field-select" value={installer} onChange={e => setInstaller(e.target.value)}>
+          <option value="">Select an installer company…</option>
+          {installers.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+        </select>
+        {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installer accounts yet — add one in User Management first.</div>}
+      </div>
+      {err && <div className="login-err">{err}</div>}
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Create Job — Generate PO/DO</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+function InstallerJobsPage({ jobs, me, onAccept, onArrivalPhoto, onCompletionPhoto }) {
+  const mine = jobs.filter(j => j.installer === me);
+  const pending = mine.filter(j => j.status === "pending");
+  const active = mine.filter(j => j.status === "accepted" || j.status === "arrived");
+  const done = mine.filter(j => j.status === "completed");
+  return (
+    <div className="content">
+      <div className="section-title">New Assignments ({pending.length})</div>
+      {pending.length === 0 && <div className="empty" style={{ padding: "20px 0" }}><div className="empty-lbl">No new jobs waiting for your acceptance.</div></div>}
+      {pending.map(j => (
+        <div className="list-item" key={j.id}>
+          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>New Job Assignment</div><span className="badge badge-pending">Pending Acceptance</span></div>
+          <div style={{ fontSize: 12, color: "#8A8073" }}>🗓 {j.date} · {fmt12h(j.timeFrom)}–{fmt12h(j.timeTo)}</div>
+          <div style={{ fontSize: 11, color: "#8A8073" }}>Full details (product, address, collection point) will show once accepted.</div>
+          <button className="btn btn-primary btn-sm" onClick={() => onAccept(j.id)}>✓ Accept Job</button>
+        </div>
+      ))}
+
+      {active.length > 0 && <div className="section-title" style={{ marginTop: 8 }}>Active Jobs ({active.length})</div>}
+      {active.map(j => (
+        <div className="list-item" key={j.id}>
+          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.product}</div><span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span></div>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>Qty to install: {j.qty}</div>
+          <div style={{ fontSize: 12, color: "#8A8073" }}>📍 Jobsite: {j.address}</div>
+          <div style={{ fontSize: 12, color: "#8A8073" }}>📦 Collect goods: {j.collectPoint || "—"}</div>
+          <div style={{ fontSize: 12, color: "#8A8073" }}>🗓 {j.date} · {fmt12h(j.timeFrom)}–{fmt12h(j.timeTo)}</div>
+          <div style={{ fontSize: 11, color: "#8A8073" }}>{j.poNo} · {j.doNo}</div>
+          {j.status === "accepted" && (
+            <>
+              <div className="field-label" style={{ marginTop: 4 }}>Step 1 — Arrival photo (unit number)</div>
+              <div className="photo-zone">
+                <input type="file" accept="image/*" capture="environment" onChange={e => { const f = e.target.files[0]; if (f) onArrivalPhoto(j.id, f); }} />
+                <div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the unit number — records time & location</div>
+              </div>
+            </>
+          )}
+          {j.status === "arrived" && (
+            <>
+              {j.arrivalPhoto && <img src={j.arrivalPhoto} alt="arrival" className="photo-preview" />}
+              <div style={{ fontSize: 11, color: "#8A8073" }}>
+                Arrived {new Date(j.arrivalMeta.takenAt).toLocaleString("en-SG")}
+                {j.arrivalMeta.lat != null ? ` · ${j.arrivalMeta.lat.toFixed(5)}, ${j.arrivalMeta.lng.toFixed(5)}` : " · location unavailable"}
+              </div>
+              <div className="field-label" style={{ marginTop: 4 }}>Step 2 — Completion photo (installed product)</div>
+              <div className="photo-zone">
+                <input type="file" accept="image/*" capture="environment" onChange={e => { const f = e.target.files[0]; if (f) onCompletionPhoto(j.id, f); }} />
+                <div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the installed product</div>
+              </div>
+            </>
+          )}
+        </div>
+      ))}
+
+      {done.length > 0 && <div className="section-title" style={{ marginTop: 8 }}>Completed ({done.length})</div>}
+      {done.map(j => (
+        <div className="list-item" key={j.id} style={{ opacity: 0.85 }}>
+          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.product}</div><span className="badge badge-completed">Completed</span></div>
+          <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {j.address}</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {j.arrivalPhoto && <img src={j.arrivalPhoto} alt="arrival" className="photo-preview" style={{ flex: 1 }} />}
+            {j.completionPhoto && <img src={j.completionPhoto} alt="installed" className="photo-preview" style={{ flex: 1 }} />}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── COMPANY SETTINGS (super admin) ────────────────────────────────────────────
+function CompanySettingsPage({ settings, setSettings, counters, setCounters }) {
+  const [form, setForm] = useState(settings);
+  const [nums, setNums] = useState(counters);
+  const [saved, setSaved] = useState("");
+  const set = (k, v) => setForm({ ...form, [k]: v });
+  const setN = (k, v) => setNums({ ...nums, [k]: v });
+  const saveCompany = () => { setSettings(form); setSaved("company"); setTimeout(() => setSaved(""), 2000); };
+  const saveNumbers = () => {
+    setCounters({ ...nums, poNext: Number(nums.poNext) || 1, doNext: Number(nums.doNext) || 1 });
+    setSaved("numbers"); setTimeout(() => setSaved(""), 2000);
+  };
+  return (
+    <div className="content">
+      <div className="card">
+        <div className="card-title">Company Details</div>
+        <div className="card-sub" style={{ marginBottom: 14 }}>Shown on every PO, DO and Tax Invoice generated across the system.</div>
+        <div className="form-group"><div className="field-label">Company Name</div><input className="field-input" value={form.name} onChange={e => set("name", e.target.value)} /></div>
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">Address Line 1</div><input className="field-input" value={form.addr1} onChange={e => set("addr1", e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">Address Line 2</div><input className="field-input" value={form.addr2} onChange={e => set("addr2", e.target.value)} /></div>
+        </div>
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">Phone</div><input className="field-input" value={form.phone} onChange={e => set("phone", e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">Email</div><input className="field-input" type="email" placeholder="hello@company.com" value={form.email} onChange={e => set("email", e.target.value)} /></div>
+        </div>
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">Website</div><input className="field-input" placeholder="www.company.com" value={form.website} onChange={e => set("website", e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">UEN</div><input className="field-input" value={form.uen} onChange={e => set("uen", e.target.value)} /></div>
+        </div>
+        <div className="form-group"><div className="field-label">GST Registration No.</div><input className="field-input" value={form.gst} onChange={e => set("gst", e.target.value)} /></div>
+        <button className="btn btn-primary" onClick={saveCompany}>{saved === "company" ? "✓ Saved" : "Save Company Details"}</button>
+      </div>
+      <div className="card">
+        <div className="card-title">Document Numbering</div>
+        <div className="card-sub" style={{ marginBottom: 14 }}>The next PO and DO number — shared by Sales Orders and Installer Jobs, always running upward from here. Changing this only affects documents created after you save.</div>
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">PO Prefix</div><input className="field-input" value={nums.poPrefix} onChange={e => setN("poPrefix", e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">Next PO Number</div><input className="field-input" type="number" value={nums.poNext} onChange={e => setN("poNext", e.target.value)} /></div>
+        </div>
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">DO Prefix</div><input className="field-input" value={nums.doPrefix} onChange={e => setN("doPrefix", e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">Next DO Number</div><input className="field-input" type="number" value={nums.doNext} onChange={e => setN("doNext", e.target.value)} /></div>
+        </div>
+        <div style={{ fontSize: 12, color: "#8A8073", marginBottom: 14 }}>Next document will be <strong>{nums.poPrefix}{nums.poNext}</strong> / <strong>{nums.doPrefix}{nums.doNext}</strong>.</div>
+        <button className="btn btn-primary" onClick={saveNumbers}>{saved === "numbers" ? "✓ Saved" : "Save Numbering"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── SALES TARGETS (admin) ─────────────────────────────────────────────────────
+function TargetsPage({ targets, setTargets, users }) {
+  const salespeople = users.filter(u => u.role === "salesperson");
+  const getTarget = name => targets.find(t => t.salesperson === name) || { salesperson: name, newDealerWeekly: 0, salesMonthly: 0 };
+  const [drafts, setDrafts] = useState(() => Object.fromEntries(salespeople.map(u => [u.name, getTarget(u.name)])));
+  const setDraft = (name, key, val) => setDrafts({ ...drafts, [name]: { ...drafts[name], [key]: val } });
+  const save = name => {
+    const d = drafts[name];
+    const clean = { salesperson: name, newDealerWeekly: Number(d.newDealerWeekly) || 0, salesMonthly: Number(d.salesMonthly) || 0 };
+    const exists = targets.some(t => t.salesperson === name);
+    setTargets(exists ? targets.map(t => t.salesperson === name ? { ...t, ...clean } : t) : [...targets, { id: Date.now(), ...clean }]);
+  };
+  return (
+    <div className="content">
+      <div className="card-sub" style={{ marginBottom: 4 }}>Weekly new-dealer target and monthly sales target per salesperson — they'll see their own progress on their dashboard.</div>
+      {salespeople.length === 0
+        ? <div className="empty"><div className="empty-icon">🎯</div><div className="empty-lbl">No salespeople yet.</div></div>
+        : salespeople.map(u => {
+          const d = drafts[u.name] || getTarget(u.name);
+          return (
+            <div className="card" key={u.id}>
+              <div className="card-title">{u.name}</div>
+              <div className="input-row-2">
+                <div className="form-group"><div className="field-label">New Dealers / Week</div><input className="field-input" type="number" inputMode="numeric" value={d.newDealerWeekly} onChange={e => setDraft(u.name, "newDealerWeekly", e.target.value)} /></div>
+                <div className="form-group"><div className="field-label">Sales Target / Month (SGD)</div><input className="field-input" type="number" inputMode="numeric" value={d.salesMonthly} onChange={e => setDraft(u.name, "salesMonthly", e.target.value)} /></div>
+              </div>
+              <button className="btn btn-primary btn-sm" onClick={() => save(u.name)}>Save Target</button>
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+// ── CLAIMS ─────────────────────────────────────────────────────────────────────
+function ClaimsPage({ claims, me, onAdd }) {
+  const mine = claims.filter(c => c.by === me);
+  return (
+    <div className="content">
+      <div className="section-hdr"><div className="section-title">My Claims ({mine.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Claim</button></div>
+      {mine.length === 0 ? <div className="empty"><div className="empty-icon">🧾</div><div className="empty-lbl">No claims submitted yet.</div></div>
+        : mine.map(c => (
+          <div className="list-item" key={c.id}>
+            <div className="item-meta"><div style={{ fontSize: 15, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className={`badge badge-${c.status === "pending" ? "pending" : c.status === "approved" ? "reviewed" : "rejected"}`}>{c.status}</span></div>
+            <div className="item-time">{c.date}{c.dealer ? ` · ${c.dealer}` : ""}</div>
+            {c.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{c.notes}</div>}
+            {c.photo && <img src={c.photo} alt="receipt" className="photo-preview" />}
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function ClaimModal({ user, dealers, onSave, onClose }) {
+  const [amount, setAmount] = useState("");
+  const [dealer, setDealer] = useState("");
+  const [notes, setNotes] = useState("");
+  const [photo, setPhoto] = useState(null);
+  const [err, setErr] = useState("");
+  const hp = e => handlePhoto(e, setPhoto);
+  const save = () => {
+    if (!amount || Number(amount) <= 0) { setErr("Enter the claim amount."); return; }
+    if (!photo) { setErr("Please attach a photo of the receipt."); return; }
+    onSave({ amount, dealer, notes, photo, by: user.name, date: todayStr(), dateISO: todayISO() });
+  };
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-handle" /><div className="modal-title">New Claim</div>
+      <div className="form-group"><div className="field-label">Amount (SGD)</div><input className="field-input" type="number" inputMode="decimal" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} /></div>
+      <div className="form-group"><div className="field-label">Dealer (optional)</div>
+        <select className="field-select" value={dealer} onChange={e => setDealer(e.target.value)}>
+          <option value="">Not tied to a dealer</option>
+          {dealers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+        </select>
+      </div>
+      <div className="form-group"><div className="field-label">What was this for?</div><input className="field-input" placeholder="e.g. Treats for showroom meetup" value={notes} onChange={e => setNotes(e.target.value)} /></div>
+      <div className="form-group"><div className="field-label">Receipt Photo</div>
+        <div className="photo-zone"><input type="file" accept="image/*" capture="environment" onChange={hp} />{photo ? <img src={photo} alt="receipt" className="photo-preview" /> : <><div className="photo-icon">🧾</div><div className="photo-lbl">Tap to photograph the receipt</div></>}</div>
+      </div>
+      {err && <div className="login-err">{err}</div>}
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Submit Claim</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+function ClaimsReviewPage({ claims, setClaims }) {
+  const update = (id, status) => setClaims(claims.map(c => c.id === id ? { ...c, status } : c));
+  const pending = claims.filter(c => c.status === "pending");
+  const reviewed = claims.filter(c => c.status !== "pending");
+  return (
+    <div className="content">
+      <div className="section-title">Pending ({pending.length})</div>
+      {pending.length === 0 && <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No pending claims.</div></div>}
+      {pending.map(c => (
+        <div className="list-item" key={c.id}>
+          <div className="item-meta"><div style={{ fontSize: 15, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className="badge badge-pending">Pending</span></div>
+          <div className="item-time">{c.date} · by {c.by}{c.dealer ? ` · ${c.dealer}` : ""}</div>
+          {c.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{c.notes}</div>}
+          {c.photo && <img src={c.photo} alt="receipt" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8 }} />}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={() => update(c.id, "approved")}>Approve</button>
+            <button className="btn btn-danger btn-sm" style={{ flex: 1 }} onClick={() => update(c.id, "rejected")}>Reject</button>
+          </div>
+        </div>
+      ))}
+      {reviewed.length > 0 && <>
+        <div className="divider" />
+        <div className="section-title">Reviewed</div>
+        {reviewed.map(c => (
+          <div className="list-item" key={c.id}>
+            <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className={`badge badge-${c.status === "approved" ? "reviewed" : "rejected"}`}>{c.status}</span></div>
+            <div className="item-time">{c.date} · by {c.by}{c.dealer ? ` · ${c.dealer}` : ""}</div>
+          </div>
+        ))}
+      </>}
+    </div>
+  );
+}
+
+// ── FINANCE (admin) ────────────────────────────────────────────────────────────
+function FinancePage({ dealers, claims, invoices, supplierPayments, onGenerateInvoice, onMarkPaid, onAddSupplierPayment }) {
+  const [genDealer, setGenDealer] = useState("");
+  const [genMonth, setGenMonth] = useState(() => todayISO().slice(0, 7));
+  const [lastGenerated, setLastGenerated] = useState(null);
+  const generate = () => { if (genDealer && genMonth) setLastGenerated(onGenerateInvoice(genDealer, genMonth)); };
+
+  const [spSupplier, setSpSupplier] = useState("");
+  const [spAmount, setSpAmount] = useState("");
+  const [spNotes, setSpNotes] = useState("");
+  const addSp = () => {
+    if (!spSupplier || !spAmount) return;
+    onAddSupplierPayment({ supplier: spSupplier, amount: spAmount, notes: spNotes, date: todayStr(), dateISO: todayISO() });
+    setSpSupplier(""); setSpAmount(""); setSpNotes("");
+  };
+
+  const totalSupplierPayments = supplierPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  const approvedClaims = claims.filter(c => c.status === "approved");
+  const paidInvoices = invoices.filter(i => i.status === "paid");
+  const unpaidInvoices = invoices.filter(i => i.status !== "paid");
+  const totalIncome = paidInvoices.reduce((s, i) => s + i.total, 0);
+  const curMonth = todayISO().slice(0, 7);
+  const nmd = new Date(); nmd.setMonth(nmd.getMonth() + 1);
+  const nextMonth = nmd.toISOString().slice(0, 7);
+  const collectableThisMonth = unpaidInvoices.filter(i => i.dueDateISO.slice(0, 7) === curMonth).reduce((s, i) => s + i.total, 0);
+  const collectableNextMonth = unpaidInvoices.filter(i => i.dueDateISO.slice(0, 7) === nextMonth).reduce((s, i) => s + i.total, 0);
+  const outstanding = unpaidInvoices.reduce((s, i) => s + i.total, 0);
+
+  const aging = unpaidInvoices.map(i => ({ ...i, overdue: daysOverdue(i.dueDateISO) }));
+  const agingBuckets = ["Not due", "1–30 days", "31–60 days", "61–90 days", "90+ days"];
+  const agingData = agingBuckets.map(b => ({ bucket: b, amount: aging.filter(i => agingBucket(i.overdue) === b).reduce((s, i) => s + i.total, 0) }));
+  const worstLate = [...aging].filter(i => i.overdue > 0).sort((a, b) => b.overdue - a.overdue).slice(0, 5);
+
+  const byDealer = {};
+  unpaidInvoices.forEach(i => { byDealer[i.dealer] = (byDealer[i.dealer] || 0) + i.total; });
+  const topOutstanding = Object.entries(byDealer).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, amt]) => ({ name, amt }));
+
+  const monthsBack = [];
+  for (let i = 5; i >= 0; i--) { const d = new Date(); d.setMonth(d.getMonth() - i); monthsBack.push(d.toISOString().slice(0, 7)); }
+  const incomeExpenseData = monthsBack.map(m => {
+    const income = paidInvoices.filter(i => i.paidDateISO && i.paidDateISO.slice(0, 7) === m).reduce((s, i) => s + i.total, 0);
+    const supplierExp = supplierPayments.filter(p => p.dateISO.slice(0, 7) === m).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+    const claimExp = approvedClaims.filter(c => c.dateISO.slice(0, 7) === m).reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+    return { month: new Date(m + "-01").toLocaleDateString("en-SG", { month: "short" }), Income: income, Expense: supplierExp + claimExp };
+  });
+
+  return (
+    <div className="content">
+      <div className="kpi-grid">
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#10B981", fontSize: 19 }}>{sgd(totalIncome)}</div><div className="kpi-lbl">Income Received</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#B5715A", fontSize: 19 }}>{sgd(totalSupplierPayments)}</div><div className="kpi-lbl">Paid to Suppliers</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#9A7B4E", fontSize: 19 }}>{sgd(collectableThisMonth)}</div><div className="kpi-lbl">Collectable This Month</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#F59E0B", fontSize: 19 }}>{sgd(collectableNextMonth)}</div><div className="kpi-lbl">Collectable Next Month</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#EF4444", fontSize: 19 }}>{sgd(outstanding)}</div><div className="kpi-lbl">Total Outstanding</div></div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Income vs Expense — Last 6 Months</div>
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={incomeExpenseData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
+            <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#8A8073" }} />
+            <YAxis tick={{ fontSize: 11, fill: "#8A8073" }} />
+            <Tooltip content={<CustomTooltip />} />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Bar dataKey="Income" fill="#10B981" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="Expense" fill="#B5715A" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Outstanding Invoice Aging</div>
+        <div className="card-sub">Unpaid invoice value by how overdue</div>
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={agingData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
+            <XAxis dataKey="bucket" tick={{ fontSize: 9.5, fill: "#8A8073" }} />
+            <YAxis tick={{ fontSize: 10, fill: "#8A8073" }} />
+            <Tooltip content={<CustomTooltip />} />
+            <Bar dataKey="amount" fill="#EF4444" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {topOutstanding.length > 0 && (
+        <div className="card">
+          <div className="card-title">Top Outstanding Dealers</div>
+          <ResponsiveContainer width="100%" height={Math.max(120, topOutstanding.length * 36)}>
+            <BarChart data={topOutstanding} layout="vertical" margin={{ top: 4, right: 20, left: 20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 11, fill: "#8A8073" }} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#221E1A", fontWeight: 600 }} width={110} />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar dataKey="amt" fill="#9A7B4E" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {worstLate.length > 0 && (
+        <div className="card" style={{ borderColor: "#F6CDCD" }}>
+          <div className="card-title" style={{ color: "#B91C1C" }}>Longest Overdue</div>
+          {worstLate.map(i => (
+            <div key={i.id} className="list-item" style={{ marginTop: 8 }}>
+              <div className="item-meta"><div style={{ fontWeight: 700 }}>{i.dealer}</div><span className="badge badge-rejected">{i.overdue}d overdue</span></div>
+              <div className="item-time">{i.refNo} · Due {i.dueDate} · {sgd(i.total)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-title">Generate Monthly Tax Invoice</div>
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">Dealer</div>
+            <select className="field-select" value={genDealer} onChange={e => setGenDealer(e.target.value)}>
+              <option value="">Select a dealer…</option>
+              {dealers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group"><div className="field-label">Month</div><input className="field-input" type="month" value={genMonth} onChange={e => setGenMonth(e.target.value)} /></div>
+        </div>
+        <button className="btn btn-primary" onClick={generate}>Generate Tax Invoice</button>
+        {lastGenerated && (
+          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => downloadInvoice(lastGenerated)}>⬇ Download {lastGenerated.refNo}</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => printInvoice(lastGenerated)}>🖨 Print</button>
+          </div>
+        )}
+      </div>
+
+      <div className="section-hdr"><div className="section-title">Tax Invoices ({invoices.length})</div></div>
+      {invoices.length === 0 ? <div className="empty"><div className="empty-icon">🧾</div><div className="empty-lbl">No invoices generated yet.</div></div>
+        : invoices.map(i => (
+          <div className="list-item" key={i.id}>
+            <div className="item-meta"><div style={{ fontWeight: 700 }}>{i.dealer}</div><span className={`badge ${i.status === "paid" ? "badge-reviewed" : "badge-pending"}`}>{i.status}</span></div>
+            <div className="item-time">{i.refNo} · {i.monthLabel} · Due {i.dueDate}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#9A7B4E" }}>{sgd(i.total)}</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button className="btn btn-ghost btn-xs" onClick={() => downloadInvoice(i)}>⬇ PDF</button>
+              <button className="btn btn-ghost btn-xs" onClick={() => printInvoice(i)}>🖨 Print</button>
+              {i.status !== "paid" && <button className="btn btn-green btn-xs" onClick={() => onMarkPaid(i.id)}>Mark Paid</button>}
+            </div>
+          </div>
+        ))}
+
+      <div className="card">
+        <div className="card-title">Log Supplier Payment</div>
+        <div className="form-group"><div className="field-label">Supplier</div><input className="field-input" placeholder="Supplier name" value={spSupplier} onChange={e => setSpSupplier(e.target.value)} /></div>
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">Amount (SGD)</div><input className="field-input" type="number" inputMode="decimal" placeholder="0.00" value={spAmount} onChange={e => setSpAmount(e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="What was this for?" value={spNotes} onChange={e => setSpNotes(e.target.value)} /></div>
+        </div>
+        <button className="btn btn-primary" onClick={addSp}>Log Payment</button>
+      </div>
+      <div className="section-hdr"><div className="section-title">Supplier Payments ({supplierPayments.length})</div></div>
+      {supplierPayments.length === 0 ? <div className="empty"><div className="empty-icon">📦</div><div className="empty-lbl">No supplier payments logged yet.</div></div>
+        : supplierPayments.map(p => (
+          <div className="list-item" key={p.id}>
+            <div className="item-meta"><div style={{ fontWeight: 700 }}>{p.supplier}</div><div style={{ fontWeight: 700, color: "#B5715A" }}>{sgd(p.amount)}</div></div>
+            <div className="item-time">{p.date} · by {p.by}</div>
+            {p.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{p.notes}</div>}
+          </div>
+        ))}
+    </div>
+  );
+}
+
+// ── BALANCE SHEET (super admin) ───────────────────────────────────────────────
+function BalanceSheetPage({ invoices, supplierPayments, claims }) {
+  const [view, setView] = useState("month");
+  const approvedClaims = claims.filter(c => c.status === "approved");
+  const paidInvoices = invoices.filter(i => i.status === "paid" && i.paidDateISO);
+
+  const periods = {};
+  const bump = (key, field, amt) => { if (!periods[key]) periods[key] = { in: 0, out: 0 }; periods[key][field] += amt; };
+  const periodKey = iso => view === "month" ? iso.slice(0, 7) : iso.slice(0, 4);
+
+  paidInvoices.forEach(i => bump(periodKey(i.paidDateISO), "in", i.total));
+  supplierPayments.forEach(p => bump(periodKey(p.dateISO), "out", parseFloat(p.amount) || 0));
+  approvedClaims.forEach(c => bump(periodKey(c.dateISO), "out", parseFloat(c.amount) || 0));
+
+  const sortedKeys = Object.keys(periods).sort();
+  const rows = sortedKeys.map(k => ({
+    period: view === "month" ? new Date(k + "-01").toLocaleDateString("en-SG", { month: "long", year: "numeric" }) : k,
+    key: k, in: periods[k].in, out: periods[k].out, net: periods[k].in - periods[k].out,
+  }));
+  const chartData = rows.map(r => ({ label: view === "month" ? new Date(r.key + "-01").toLocaleDateString("en-SG", { month: "short", year: "2-digit" }) : r.key, In: r.in, Out: r.out }));
+  const totalIn = rows.reduce((s, r) => s + r.in, 0);
+  const totalOut = rows.reduce((s, r) => s + r.out, 0);
+
+  return (
+    <div className="content">
+      <div className="section-hdr">
+        <div className="section-title">Balance Sheet</div>
+        <div className="filter-tabs">
+          <button className={`btn btn-xs ${view === "month" ? "btn-primary" : "btn-ghost"}`} onClick={() => setView("month")}>Monthly</button>
+          <button className={`btn btn-xs ${view === "year" ? "btn-primary" : "btn-ghost"}`} onClick={() => setView("year")}>Yearly</button>
+        </div>
+      </div>
+      <div className="card-sub">In = payments received from dealers. Out = supplier payments + approved claims.</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#10B981" }}>{sgd(totalIn)}</div><div className="kpi-lbl">Total In</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#B5715A" }}>{sgd(totalOut)}</div><div className="kpi-lbl">Total Out</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: totalIn - totalOut >= 0 ? "#10B981" : "#EF4444" }}>{sgd(totalIn - totalOut)}</div><div className="kpi-lbl">Net</div></div>
+      </div>
+      {chartData.length > 0 && (
+        <div className="card">
+          <div className="card-title">{view === "month" ? "Monthly" : "Yearly"} In vs Out</div>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#8A8073" }} />
+              <YAxis tick={{ fontSize: 11, fill: "#8A8073" }} />
+              <Tooltip content={<CustomTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="In" fill="#10B981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Out" fill="#B5715A" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {rows.length === 0 ? <div className="empty"><div className="empty-icon">📒</div><div className="empty-lbl">No income or expense recorded yet.</div></div>
+        : [...rows].reverse().map(r => (
+          <div className="list-item" key={r.key}>
+            <div className="item-meta"><div style={{ fontWeight: 700 }}>{r.period}</div><div style={{ fontWeight: 800, color: r.net >= 0 ? "#10B981" : "#EF4444" }}>{sgd(r.net)}</div></div>
+            <div style={{ display: "flex", gap: 16, fontSize: 12, color: "#8A8073" }}>
+              <span>In: <strong style={{ color: "#10B981" }}>{sgd(r.in)}</strong></span>
+              <span>Out: <strong style={{ color: "#B5715A" }}>{sgd(r.out)}</strong></span>
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
 // ── DATA MANAGEMENT (super admin) ─────────────────────────────────────────────
 function SystemPage({ logs, damages, docs, dealers, products, tasks, trash, notices, onLoad, onClear }) {
   const rows = [["Daily logs", logs.length], ["Damage", damages.length], ["Documents", docs.length], ["Dealers", dealers.length], ["Products", products.length], ["Tasks", tasks.length], ["Trash", trash.length], ["Notices", notices.length]];
@@ -1569,13 +2431,11 @@ function LogModal({ user, dealers, products, onSave, onClose }) {
   const save=()=>{
     if(!dealer||!product){ setErr("Please select a dealer and a product."); return; }
     if(!delivered&&!returned&&!exchanged){ setErr("Enter a delivered, returned or exchanged quantity."); return; }
-    const num = String(Date.now()).slice(-6);
     onSave({
       id: Date.now(),
       dealer, product, price,
       sold: Number(delivered)||0, returned: Number(returned)||0, exchanged: Number(exchanged)||0,
       notes, photo, by:user.name, date:todayStr(), dateISO:todayISO(), time:fmtTime(),
-      poNo:"PO-"+num, doNo:"DO-"+num,
     });
   };
   return (
@@ -1693,8 +2553,10 @@ function UserModal({ editUser, users, setUsers, onClose }) {
       <div className="form-group"><div className="field-label">Role</div>
         <div className="role-row">
           <button className={`role-btn ${role==="salesperson"?"active":""}`} onClick={()=>setRole("salesperson")}>Salesperson</button>
+          <button className={`role-btn ${role==="installer"?"active":""}`} onClick={()=>setRole("installer")}>Installer</button>
           <button className={`role-btn ${role==="admin"?"active":""}`} onClick={()=>setRole("admin")}>Admin</button>
         </div>
+        {role === "installer" && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>One account per installer company — use the company name.</div>}
       </div>
       <div className="form-group"><div className="field-label">PIN</div><input className="field-input" type="password" inputMode="numeric" maxLength={6} placeholder="Set PIN" value={pin} onChange={e=>setPin(e.target.value)}/></div>
       <div className="modal-actions"><button className="btn btn-primary" style={{flex:1}} onClick={save}>{editUser?"Save Changes":"Create User"}</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>

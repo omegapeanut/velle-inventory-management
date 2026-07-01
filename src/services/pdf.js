@@ -8,6 +8,12 @@ const MUTE = [120, 114, 104];   // warm grey
 const ACCENT = [154, 123, 78];  // bronze
 const L = 40, R = 555;          // page margins (A4 = 595pt wide)
 
+// Editable company details (name/address/phone/email/website/UEN/GST) layer over the
+// static brand assets (logo/QR/bank) from velleBrand.js. Call setCompanyInfo whenever
+// SuperAdmin → Company Settings changes so every subsequently-generated PDF picks it up.
+let COMPANY = { ...VELLE };
+export function setCompanyInfo(overrides) { COMPANY = { ...VELLE, ...overrides }; }
+
 const money = n => "$" + (Number(n) || 0).toLocaleString("en-SG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // Build the printable line items from an order (delivered / returned / exchanged).
@@ -27,13 +33,15 @@ function lineItems(order) {
 function header(doc, title, refLabel, refNo, date) {
   // logo
   const lw = 96, lh = lw * 152 / 439;
-  try { doc.addImage(VELLE.logo, "PNG", L, 34, lw, lh); } catch { /* ignore */ }
+  try { doc.addImage(COMPANY.logo, "PNG", L, 34, lw, lh); } catch { /* ignore */ }
   // company block (right aligned)
   doc.setTextColor(...INK); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-  doc.text(VELLE.name, R, 42, { align: "right" });
+  doc.text(COMPANY.name, R, 42, { align: "right" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MUTE);
-  const lines = [VELLE.addr1, VELLE.addr2, `UEN ${VELLE.uen}`, `GST Reg. No. ${VELLE.gst}`];
-  if (VELLE.phone) lines.push(`Tel ${VELLE.phone}`);
+  const lines = [COMPANY.addr1, COMPANY.addr2, `UEN ${COMPANY.uen}`, `GST Reg. No. ${COMPANY.gst}`];
+  if (COMPANY.phone) lines.push(`Tel ${COMPANY.phone}`);
+  if (COMPANY.email) lines.push(COMPANY.email);
+  if (COMPANY.website) lines.push(COMPANY.website);
   lines.forEach((t, i) => doc.text(t, R, 55 + i * 10, { align: "right" }));
   // title
   doc.setTextColor(...INK); doc.setFont("helvetica", "bold"); doc.setFontSize(22);
@@ -122,7 +130,7 @@ function paymentQR(doc, y) {
   doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(...INK);
   doc.text("Payment", L + 78, y + 12);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MUTE);
-  doc.text(VELLE.payNow, L + 78, y + 26);
+  doc.text(`PayNow to UEN ${COMPANY.uen}`, L + 78, y + 26);
   doc.text(VELLE.bank, L + 78, y + 37);
   doc.text("Scan the PayNow QR to pay.", L + 78, y + 48);
 }
@@ -139,7 +147,7 @@ function signatures(doc, y) {
 
 function footer(doc) {
   doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MUTE);
-  doc.text(`${VELLE.name}  ·  UEN ${VELLE.uen}  ·  This is a computer-generated document.`, 297.6, 820, { align: "center" });
+  doc.text(`${COMPANY.name}  ·  UEN ${COMPANY.uen}  ·  This is a computer-generated document.`, 297.6, 820, { align: "center" });
 }
 
 export function makePO(order) {
@@ -166,6 +174,80 @@ export function makeDO(order) {
   signatures(doc, 770);
   footer(doc);
   return doc;
+}
+
+// ── TAX INVOICE (monthly, per dealer) ──────────────────────────────────────────
+function invoiceParties(doc, y, invoice) {
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...MUTE);
+  doc.text("BILL TO", L, y);
+  doc.text("PERIOD", R - 150, y);
+  doc.setTextColor(...INK); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+  doc.text(invoice.dealer || "—", L, y + 15);
+  doc.setFontSize(10);
+  doc.text(invoice.monthLabel || "—", R - 150, y + 15);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...MUTE);
+  doc.text(`Due date: ${invoice.dueDate || "—"}`, R - 150, y + 29);
+  return y + 42;
+}
+
+function invoiceItemsTable(doc, y, invoice) {
+  const head = [["S/No", "Model / Description", "PO No.", "DO No.", "Qty", "Unit Price", "Amount"]];
+  const body = (invoice.lines || []).map((l, i) => [String(i + 1), l.model, l.poNo || "—", l.doNo || "—", String(l.qty), money(l.price), money(l.amount)]);
+  autoTable(doc, {
+    startY: y, head, body, theme: "grid",
+    styles: { font: "helvetica", fontSize: 8, cellPadding: 5, textColor: INK, lineColor: [225, 219, 208] },
+    headStyles: { fillColor: INK, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7.5 },
+    columnStyles: { 0: { cellWidth: 32, halign: "center" }, 2: { cellWidth: 60 }, 3: { cellWidth: 60 }, 4: { cellWidth: 32, halign: "center" }, 5: { cellWidth: 66, halign: "right" }, 6: { cellWidth: 72, halign: "right" } },
+    margin: { left: L, right: 40 },
+  });
+  return doc.lastAutoTable.finalY;
+}
+
+function invoiceTotals(doc, y, invoice) {
+  const x1 = R - 190, x2 = R;
+  doc.setFontSize(9.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...INK);
+  const row = (lbl, val, bold) => {
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.text(lbl, x1, y); doc.text(val, x2, y, { align: "right" }); y += 16;
+  };
+  row("Sub-Total", money(invoice.subtotal));
+  row(`GST ${Math.round((invoice.gstRate ?? 0.09) * 100)}%`, money(invoice.gst));
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(x1, y - 8, x2, y - 8);
+  doc.setFontSize(11); row("Total Due (SGD)", money(invoice.total), true);
+  return y;
+}
+
+function invoiceTerms(doc, y) {
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(...INK);
+  doc.text("STANDARD TERMS", L, y); y += 12;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...MUTE);
+  const t = [
+    "1. Payment is due within 30 days of the invoice date stated above.",
+    "2. Accounts overdue beyond the 30-day payment term are subject to a $200/month administrative fee.",
+    "3. A late payment charge of 3% of the total amount owing applies to balances that remain overdue.",
+    "4. All goods remain the property of Velle Pte. Ltd. until paid in full.",
+  ];
+  t.forEach(line => { doc.text(line, L, y); y += 10; });
+  return y;
+}
+
+export function makeTaxInvoice(invoice) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  let y = header(doc, "TAX INVOICE", "Invoice No.", invoice.refNo, invoice.issueDate);
+  y = invoiceParties(doc, y, invoice);
+  y = invoiceItemsTable(doc, y + 4, invoice);
+  invoiceTotals(doc, y + 22, invoice);
+  paymentQR(doc, 630);
+  invoiceTerms(doc, 720);
+  footer(doc);
+  return doc;
+}
+
+export function downloadInvoice(invoice) { makeTaxInvoice(invoice).save(`${invoice.refNo || "invoice"}.pdf`); }
+export function printInvoice(invoice) {
+  const doc = makeTaxInvoice(invoice);
+  doc.autoPrint();
+  window.open(doc.output("bloburl"), "_blank");
 }
 
 function make(order, kind) { return kind === "PO" ? makePO(order) : makeDO(order); }
