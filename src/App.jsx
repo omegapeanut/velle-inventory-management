@@ -355,6 +355,16 @@ const fmtTime = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", 
 const todayStr = () => fmtDate(new Date());
 const todayISO = () => new Date().toISOString().split("T")[0];
 
+// Start-of-period ISO date (Monday-based week) for daily/weekly/monthly/yearly filtering.
+const periodStartISO = (p) => {
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  if (p === "week") d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  else if (p === "month") d.setDate(1);
+  else if (p === "year") d.setMonth(0, 1);
+  return d.toISOString().split("T")[0];
+};
+const sgd = n => "$" + Number(n || 0).toLocaleString("en-SG", { maximumFractionDigits: 0 });
+
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: "📊", admin: false },
   { id: "daily", label: "Orders", icon: "📝", admin: false },
@@ -504,8 +514,8 @@ export default function App() {
 
           {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("products")} />}
           {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} />}
-          {page === "damage" && <DamagePage damages={damages} onAdd={() => setModal("damage")} />}
-          {page === "documents" && <DocumentsPage docs={docs} onAdd={t => { setDocType(t); setModal("doc"); }} />}
+          {page === "damage" && <DamagePage damages={damages} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} />}
+          {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} />}
           {page === "reports" && <ReportsPage logs={logs} />}
           {page === "damage-review" && <DamageReviewPage damages={damages} setDamages={setDamages} />}
           {page === "doc-overview" && <DocOverviewPage docs={docs} />}
@@ -596,8 +606,16 @@ function LoginScreen({ users, onLogin }) {
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
 function DashboardPage({ logs, damages, docs, products, isAdmin, me, onAdd, onGoStock }) {
+  const [period, setPeriod] = useState("day");
   // Salespeople only ever see their own orders; admins see everything.
   const scoped = isAdmin ? logs : logs.filter(l => l.by === me);
+  // Sales summary for the chosen period (daily / weekly / monthly; yearly is admin-only).
+  const pStartISO = periodStartISO(period);
+  const periodLogs = scoped.filter(l => l.dateISO >= pStartISO);
+  const pDelivered = periodLogs.reduce((s, l) => s + Number(l.sold), 0);
+  const pReturned = periodLogs.reduce((s, l) => s + Number(l.returned || 0), 0);
+  const pRevenue = periodLogs.reduce((s, l) => s + (Number(l.sold) - Number(l.returned || 0)) * Number(l.price || 0), 0);
+  const periodTabs = [["day", "Today"], ["week", "This Week"], ["month", "This Month"], ...(isAdmin ? [["year", "This Year"]] : [])];
   const todayLogs = scoped.filter(l => l.date === todayStr());
   const sold = todayLogs.reduce((s, l) => s + Number(l.sold), 0);
   const returned = todayLogs.reduce((s, l) => s + Number(l.returned), 0);
@@ -665,6 +683,34 @@ function DashboardPage({ logs, damages, docs, products, isAdmin, me, onAdd, onGo
           <div className="alert-cta">Manage →</div>
         </div>
       )}
+
+      {/* Period sales summary */}
+      <div className="card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+          <div className="card-title" style={{ marginBottom: 0 }}>{isAdmin ? "Total Sales" : "My Sales"}</div>
+          <div className="filter-tabs">
+            {periodTabs.map(([v, lbl]) => (
+              <button key={v} className={`btn btn-xs ${period === v ? "btn-primary" : "btn-ghost"}`} onClick={() => setPeriod(v)}>{lbl}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          <div style={{ background: "var(--primary-light)", borderRadius: 10, padding: "14px 8px", textAlign: "center" }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#9A7B4E" }}>{sgd(pRevenue)}</div>
+            <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>Sales Value</div>
+          </div>
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "14px 8px", textAlign: "center" }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#221E1A" }}>{pDelivered}</div>
+            <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>Delivered</div>
+          </div>
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "14px 8px", textAlign: "center" }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#B5715A" }}>{pReturned}</div>
+            <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>Returned</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 11, color: "#8A8073", marginTop: 8 }}>{periodLogs.length} order{periodLogs.length === 1 ? "" : "s"} · since {pStartISO}</div>
+      </div>
+
       {/* KPI */}
       <div className="kpi-grid">
         <div className="kpi-card">
@@ -838,12 +884,13 @@ function LogRow({ log }) {
 }
 
 // ── DAMAGE PAGE ───────────────────────────────────────────────────────────────
-function DamagePage({ damages, onAdd }) {
+function DamagePage({ damages, me, isAdmin, onAdd }) {
+  const list = isAdmin ? damages : damages.filter(d => d.by === me);
   return (
     <div className="content">
-      <div className="section-hdr"><div className="section-title">Damage Returns ({damages.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Report Damage</button></div>
-      {damages.length === 0 ? <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No damage returns filed.</div></div>
-        : damages.map((d, i) => (
+      <div className="section-hdr"><div className="section-title">Damage Returns ({list.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Report Damage</button></div>
+      {list.length === 0 ? <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No damage returns filed.</div></div>
+        : list.map((d, i) => (
           <div className="list-item" key={i}>
             <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className={`badge badge-${d.status}`}>{d.status}</span></div>
             <div className="item-time">{d.date} · by {d.by}</div>
@@ -857,9 +904,10 @@ function DamagePage({ damages, onAdd }) {
 }
 
 // ── DOCUMENTS ─────────────────────────────────────────────────────────────────
-function DocumentsPage({ docs, onAdd }) {
+function DocumentsPage({ docs, me, isAdmin, onAdd }) {
   const [filter, setFilter] = useState("ALL");
-  const filtered = filter === "ALL" ? docs : docs.filter(d => d.type === filter);
+  const visible = isAdmin ? docs : docs.filter(d => d.by === me);
+  const filtered = filter === "ALL" ? visible : visible.filter(d => d.type === filter);
   return (
     <div className="content">
       <div className="filter-tabs">
