@@ -33,11 +33,27 @@ const STYLES = `
   .main { margin-left: var(--nav-w); flex: 1; min-height: 100vh; }
   .nav-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 19; }
   @media (max-width: 700px) {
-    .sidenav { transform: translateX(-100%); transition: transform 0.25s; }
+    .sidenav { transform: translateX(-100%); transition: transform 0.25s; box-shadow: 2px 0 18px rgba(0,0,0,0.14); }
     .sidenav.open { transform: translateX(0); }
     .main { margin-left: 0; }
     .nav-overlay.show { display: block; }
     .hamburger { display: flex !important; }
+    .content { padding: 14px; gap: 12px; }
+    .card { padding: 15px; }
+    .nav-item { padding: 12px 12px; font-size: 14px; }
+    /* 16px inputs prevent iOS Safari from auto-zooming on focus */
+    .field-input, .field-select, .pin-input { font-size: 16px; }
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .btn-xs { padding: 8px 12px; font-size: 12px; }
+    .btn-sm { padding: 9px 15px; font-size: 13px; }
+    .user-row { flex-wrap: wrap; gap: 10px; }
+    .topbar-date { display: none; }
+  }
+  /* Tablet / laptop: modal becomes a centered card instead of a bottom sheet */
+  @media (min-width: 700px) {
+    .modal-overlay { align-items: center; }
+    .modal { border-radius: 18px; max-height: 88vh; }
+    .modal-handle { display: none; }
   }
 
   /* SIDENAV */
@@ -90,6 +106,17 @@ const STYLES = `
   .field-input:focus { border-color: var(--primary); background: white; }
   .field-select { width: 100%; background: var(--bg); border: 1.5px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-family: var(--font); font-size: 14px; outline: none; }
   .input-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .input-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .cat-ic { width: 38px; height: 38px; border-radius: 10px; background: var(--primary-light); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  .entry-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .entry-tag { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; background: var(--primary-light); color: var(--primary-dark); }
+  .entry-tag.product { background: #F4E9E3; color: #8A5340; }
+  .alert-card { display: flex; align-items: center; gap: 14px; background: #FEF2F2; border: 1px solid #F6CDCD; border-radius: 14px; padding: 14px 16px; cursor: pointer; transition: box-shadow 0.15s; }
+  .alert-card:hover { box-shadow: var(--shadow-md); }
+  .alert-ic { width: 40px; height: 40px; border-radius: 10px; background: #FDE2E2; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+  .alert-title { font-size: 14px; font-weight: 700; color: #B91C1C; }
+  .alert-sub { font-size: 12px; color: #8A8073; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .alert-cta { font-size: 12px; font-weight: 700; color: #B91C1C; white-space: nowrap; }
   .input-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .form-group { display: flex; flex-direction: column; }
 
@@ -229,6 +256,29 @@ const initUsers = [
   { id: 2, pin: "0000", role: "salesperson", name: "Sales 1" },
 ];
 
+// Starter dealer & product lists — edit these on the Dealers / Products pages.
+const initDealers = [
+  { id: 1, name: "ABC Construction" },
+  { id: 2, name: "BuildRight Pte Ltd" },
+  { id: 3, name: "Summit Renovation" },
+];
+const initProducts = [
+  { id: 1, name: "One-Piece WC", stock: 40, threshold: 10 },
+  { id: 2, name: "Two-Piece WC", stock: 35, threshold: 10 },
+  { id: 3, name: "Wall-Hung WC", stock: 22, threshold: 8 },
+  { id: 4, name: "WC Seat Cover", stock: 60, threshold: 15 },
+  { id: 5, name: "Concealed Cistern", stock: 9, threshold: 8 },
+  { id: 6, name: "Basin Mixer", stock: 30, threshold: 10 },
+  { id: 7, name: "Countertop Basin", stock: 25, threshold: 8 },
+  { id: 8, name: "Vanity Cabinet", stock: 5, threshold: 6 },
+];
+
+// Daily tasks / servicing jobs.
+const initTasks = [
+  { id: 1, title: "Service leaking basin mixer", type: "Servicing", details: "Site: ABC Construction, Blk 12", date: "01 Jul 2026", dateISO: "2026-07-01", by: "Admin", status: "open" },
+  { id: 2, title: "Deliver 5 One-Piece WC to Summit", type: "Task", details: "", date: "01 Jul 2026", dateISO: "2026-07-01", by: "Admin", status: "open" },
+];
+
 const fmtDate = d => d.toLocaleDateString("en-SG", { day: "2-digit", month: "short", year: "numeric" });
 const fmtTime = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 const todayStr = () => fmtDate(new Date());
@@ -239,10 +289,13 @@ const NAV = [
   { id: "daily", label: "Daily Log", icon: "📝", admin: false },
   { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false },
   { id: "documents", label: "Documents", icon: "📄", admin: false },
+  { id: "tasks", label: "Tasks & Servicing", icon: "🧰", admin: false },
   { id: "reports", label: "Reports", icon: "📈", admin: true },
   { id: "damage-review", label: "Damage Review", icon: "🔍", admin: true },
   { id: "doc-overview", label: "Doc Overview", icon: "🗂️", admin: true },
   { id: "stock", label: "Stock Summary", icon: "📦", admin: true },
+  { id: "dealers", label: "Dealers", icon: "🤝", admin: true },
+  { id: "products", label: "Products", icon: "🛁", admin: true },
   { id: "users", label: "User Management", icon: "👥", admin: true },
 ];
 
@@ -299,6 +352,28 @@ export default function App() {
   const [modal, setModal] = useState(null);
   const [docType, setDocType] = useState("DO");
   const [editUser, setEditUser] = useState(null);
+  const [dealers, setDealers] = useState(initDealers);
+  const [products, setProducts] = useState(initProducts);
+  const [editDealer, setEditDealer] = useState(null);
+  const [editProduct, setEditProduct] = useState(null);
+  const [tasks, setTasks] = useState(initTasks);
+  const [editTask, setEditTask] = useState(null);
+
+  // Saving a purchase: record it, deduct warehouse stock, auto-generate a linked DO + PO.
+  const handlePurchase = e => {
+    setLogs([e, ...logs]);
+    const qty = Number(e.sold) || 0;
+    if (e.product && qty > 0) {
+      setProducts(ps => ps.map(p => p.name.toLowerCase() === e.product.toLowerCase() ? { ...p, stock: (Number(p.stock) || 0) - qty } : p));
+      const t = Date.now();
+      const note = `Auto-generated from purchase — ${qty} × ${e.product}`;
+      const base = { product: e.product, qty, party: e.dealer || "—", amount: "", notes: note, photo: null, by: e.by, date: e.date, dateISO: e.dateISO, auto: true };
+      const doDoc = { ...base, type: "DO", refNo: `DO-${String(t).slice(-6)}` };
+      const poDoc = { ...base, type: "PO", refNo: `PO-${String(t + 1).slice(-6)}` };
+      setDocs(ds => [doDoc, poDoc, ...ds]);
+    }
+    setModal(null);
+  };
 
   if (!user) return <LoginScreen users={users} onLogin={u => { setUser(u); setPage("dashboard"); }} />;
 
@@ -347,7 +422,7 @@ export default function App() {
             <div className="topbar-date">{todayStr()}</div>
           </div>
 
-          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} onAdd={() => setModal("log")} />}
+          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} onAdd={() => setModal("log")} onGoStock={() => go("products")} />}
           {page === "daily" && <DailyPage logs={logs} onAdd={() => setModal("log")} />}
           {page === "damage" && <DamagePage damages={damages} onAdd={() => setModal("damage")} />}
           {page === "documents" && <DocumentsPage docs={docs} onAdd={t => { setDocType(t); setModal("doc"); }} />}
@@ -355,14 +430,20 @@ export default function App() {
           {page === "damage-review" && <DamageReviewPage damages={damages} setDamages={setDamages} />}
           {page === "doc-overview" && <DocOverviewPage docs={docs} />}
           {page === "stock" && <StockPage logs={logs} />}
+          {page === "dealers" && <CatalogPage title="Dealers" noun="Dealer" icon="🤝" items={dealers} setItems={setDealers} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} />}
+          {page === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" items={products} setItems={setProducts} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} />}
+          {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} />}
           {page === "users" && <UserMgmtPage users={users} setUsers={setUsers} currentUser={user} onAdd={() => { setEditUser(null); setModal("user"); }} onEdit={u => { setEditUser(u); setModal("user"); }} />}
         </div>
       </div>
 
-      {modal === "log" && <LogModal user={user} onSave={e => { setLogs([e, ...logs]); setModal(null); }} onClose={() => setModal(null)} />}
+      {modal === "log" && <LogModal user={user} dealers={dealers} setDealers={setDealers} products={products} setProducts={setProducts} onSave={handlePurchase} onClose={() => setModal(null)} />}
       {modal === "damage" && <DamageModal user={user} onSave={e => { setDamages([e, ...damages]); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([e, ...docs]); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={() => setModal(null)} />}
+      {modal === "dealer" && <CatalogModal noun="Dealer" edit={editDealer} items={dealers} setItems={setDealers} onClose={() => setModal(null)} />}
+      {modal === "product" && <CatalogModal noun="Product" edit={editProduct} items={products} setItems={setProducts} onClose={() => setModal(null)} />}
+      {modal === "task" && <TaskModal user={user} edit={editTask} tasks={tasks} setTasks={setTasks} onClose={() => setModal(null)} />}
     </>
   );
 }
@@ -426,11 +507,12 @@ function LoginScreen({ users, onLogin }) {
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function DashboardPage({ logs, damages, docs, onAdd }) {
+function DashboardPage({ logs, damages, docs, products, onAdd, onGoStock }) {
   const todayLogs = logs.filter(l => l.date === todayStr());
   const sold = todayLogs.reduce((s, l) => s + Number(l.sold), 0);
   const collected = todayLogs.reduce((s, l) => s + Number(l.collected), 0);
   const returned = todayLogs.reduce((s, l) => s + Number(l.returned), 0);
+  const lowStock = (products || []).filter(p => Number(p.stock) <= Number(p.threshold));
   const pendingDmg = damages.filter(d => d.status === "pending").length;
   const totalBills = docs.filter(d => d.type === "BILL").reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
 
@@ -486,6 +568,16 @@ function DashboardPage({ logs, damages, docs, onAdd }) {
 
   return (
     <div className="content">
+      {lowStock.length > 0 && (
+        <div className="alert-card" onClick={onGoStock}>
+          <div className="alert-ic">⚠️</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="alert-title">{lowStock.length} product{lowStock.length > 1 ? "s" : ""} low on stock</div>
+            <div className="alert-sub">{lowStock.map(p => `${p.name} (${p.stock})`).join("  ·  ")}</div>
+          </div>
+          <div className="alert-cta">Manage →</div>
+        </div>
+      )}
       {/* KPI */}
       <div className="kpi-grid">
         <div className="kpi-card">
@@ -624,6 +716,12 @@ function LogRow({ log }) {
   return (
     <div className="list-item">
       <div className="item-meta"><div className="item-time">{log.date} · {log.time}</div><div className="item-by">{log.by}</div></div>
+      {(log.dealer || log.product) && (
+        <div className="entry-tags">
+          {log.dealer && <span className="entry-tag">🤝 {log.dealer}</span>}
+          {log.product && <span className="entry-tag product">🛁 {log.product}</span>}
+        </div>
+      )}
       <div className="nums-row">
         <div className="num-block"><div className="num-val" style={{ color: "#9A7B4E" }}>{log.sold}</div><div className="num-lbl">sold</div></div>
         <div className="num-block"><div className="num-val" style={{ color: "#10B981" }}>{log.collected}</div><div className="num-lbl">collected</div></div>
@@ -864,14 +962,151 @@ function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit }) {
   );
 }
 
+// ── CATALOG (Dealers / Products) ──────────────────────────────────────────────
+function CatalogPage({ title, noun, icon, items, setItems, onAdd, onEdit }) {
+  const remove = id => setItems(items.filter(x => x.id !== id));
+  return (
+    <div className="content">
+      <div className="section-hdr"><div className="section-title">{title} ({items.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add {noun}</button></div>
+      {items.length === 0
+        ? <div className="empty"><div className="empty-icon">{icon}</div><div className="empty-lbl">No {title.toLowerCase()} yet. Add your first one.</div></div>
+        : items.map(x => {
+          const hasStock = x.stock !== undefined;
+          const low = hasStock && Number(x.stock) <= Number(x.threshold);
+          return (
+            <div className="user-row" key={x.id}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+                <div className="cat-ic">{icon}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{x.name}</div>
+                  {hasStock && <div style={{ fontSize: 11, color: "#8A8073" }}>In stock: <strong style={{ color: low ? "#EF4444" : "#221E1A" }}>{x.stock}</strong> · alert ≤ {x.threshold}</div>}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                {low && <span className="badge badge-rejected">Low</span>}
+                <button className="btn btn-ghost btn-xs" onClick={() => onEdit(x)}>Edit</button>
+                <button className="btn btn-danger btn-xs" onClick={() => remove(x.id)}>Remove</button>
+              </div>
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+function CatalogModal({ noun, edit, items, setItems, onClose }) {
+  const isProduct = noun === "Product";
+  const [name, setName] = useState(edit?.name || "");
+  const [stock, setStock] = useState(edit?.stock ?? "");
+  const [threshold, setThreshold] = useState(edit?.threshold ?? "");
+  const save = () => {
+    const v = name.trim();
+    if (!v) return;
+    const extra = isProduct ? { stock: Number(stock) || 0, threshold: Number(threshold) || 0 } : {};
+    if (edit) setItems(items.map(x => x.id === edit.id ? { ...x, name: v, ...extra } : x));
+    else if (!items.some(x => x.name.toLowerCase() === v.toLowerCase())) setItems([...items, { id: Date.now(), name: v, ...extra }]);
+    onClose();
+  };
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-handle" /><div className="modal-title">{edit ? `Edit ${noun}` : `Add ${noun}`}</div>
+      <div className="form-group"><div className="field-label">{noun} Name</div><input className="field-input" autoFocus placeholder={`${noun} name`} value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === "Enter" && save()} /></div>
+      {isProduct && (
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">{edit ? "Current Stock" : "Opening Stock"}</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={stock} onChange={e => setStock(e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">Low-Stock Alert ≤</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={threshold} onChange={e => setThreshold(e.target.value)} /></div>
+        </div>
+      )}
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+// ── TASKS / SERVICING ─────────────────────────────────────────────────────────
+function TasksPage({ tasks, setTasks, onAdd, onEdit }) {
+  const toggle = id => setTasks(tasks.map(t => t.id === id ? { ...t, status: t.status === "done" ? "open" : "done" } : t));
+  const remove = id => setTasks(tasks.filter(t => t.id !== id));
+  const open = tasks.filter(t => t.status !== "done");
+  const done = tasks.filter(t => t.status === "done");
+  const Row = t => (
+    <div className="list-item" key={t.id} style={{ opacity: t.status === "done" ? 0.6 : 1 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <input type="checkbox" checked={t.status === "done"} onChange={() => toggle(t.id)} style={{ marginTop: 3, width: 18, height: 18, accentColor: "#9A7B4E", cursor: "pointer" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span className={`badge ${t.type === "Servicing" ? "badge-po" : "badge-do"}`}>{t.type}</span>
+            <span style={{ fontSize: 14, fontWeight: 600, textDecoration: t.status === "done" ? "line-through" : "none" }}>{t.title}</span>
+          </div>
+          {t.details && <div style={{ fontSize: 12, color: "#8A8073", marginTop: 4 }}>{t.details}</div>}
+          <div style={{ fontSize: 11, color: "#8A8073", marginTop: 4 }}>{t.date} · {t.by}</div>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className="btn btn-ghost btn-xs" onClick={() => onEdit(t)}>Edit</button>
+          <button className="btn btn-danger btn-xs" onClick={() => remove(t.id)}>Remove</button>
+        </div>
+      </div>
+    </div>
+  );
+  return (
+    <div className="content">
+      <div className="section-hdr"><div className="section-title">Open ({open.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add Task</button></div>
+      {open.length === 0 ? <div className="empty"><div className="empty-icon">🧰</div><div className="empty-lbl">No open tasks or servicing jobs.</div></div> : open.map(Row)}
+      {done.length > 0 && <><div className="section-title" style={{ marginTop: 8 }}>Completed ({done.length})</div>{done.map(Row)}</>}
+    </div>
+  );
+}
+
+function TaskModal({ user, edit, tasks, setTasks, onClose }) {
+  const [title, setTitle] = useState(edit?.title || "");
+  const [type, setType] = useState(edit?.type || "Task");
+  const [details, setDetails] = useState(edit?.details || "");
+  const save = () => {
+    const v = title.trim();
+    if (!v) return;
+    if (edit) setTasks(tasks.map(t => t.id === edit.id ? { ...t, title: v, type, details } : t));
+    else setTasks([{ id: Date.now(), title: v, type, details, date: todayStr(), dateISO: todayISO(), by: user.name, status: "open" }, ...tasks]);
+    onClose();
+  };
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-handle" /><div className="modal-title">{edit ? "Edit Task" : "Add Task / Servicing Job"}</div>
+      <div className="form-group"><div className="field-label">Type</div>
+        <div className="role-row">
+          {["Task", "Servicing"].map(o => <button key={o} className={`role-btn ${type === o ? "active" : ""}`} onClick={() => setType(o)}>{o}</button>)}
+        </div>
+      </div>
+      <div className="form-group"><div className="field-label">Title</div><input className="field-input" autoFocus placeholder="What needs doing?" value={title} onChange={e => setTitle(e.target.value)} onKeyDown={e => e.key === "Enter" && save()} /></div>
+      <div className="form-group"><div className="field-label">Details</div><input className="field-input" placeholder="Site, dealer, notes…" value={details} onChange={e => setDetails(e.target.value)} /></div>
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
 // ── MODALS ────────────────────────────────────────────────────────────────────
-function LogModal({ user, onSave, onClose }) {
+function LogModal({ user, dealers, setDealers, products, setProducts, onSave, onClose }) {
+  const [dealer,setDealer]=useState(""); const [product,setProduct]=useState("");
   const [sold,setSold]=useState(""); const [collected,setCollected]=useState(""); const [returned,setReturned]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
   const hp=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setPhoto(ev.target.result);r.readAsDataURL(f);};
-  const save=()=>{if(!sold&&!collected&&!returned)return;onSave({sold:sold||0,collected:collected||0,returned:returned||0,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO(),time:fmtTime()});};
+  const save=()=>{
+    if(!sold&&!collected&&!returned)return;
+    const dl=dealer.trim(), pr=product.trim();
+    if(dl&&!dealers.some(d=>d.name.toLowerCase()===dl.toLowerCase())) setDealers([...dealers,{id:Date.now(),name:dl}]);
+    if(pr&&!products.some(p=>p.name.toLowerCase()===pr.toLowerCase())) setProducts([...products,{id:Date.now()+1,name:pr,stock:0,threshold:0}]);
+    onSave({dealer:dl,product:pr,sold:sold||0,collected:collected||0,returned:returned||0,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO(),time:fmtTime()});
+  };
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
       <div className="modal-handle"/><div className="modal-title">Add Daily Entry</div>
+      <div className="input-row-2">
+        <div className="form-group"><div className="field-label">Dealer</div>
+          <input className="field-input" list="dealer-options" placeholder="Select or type…" value={dealer} onChange={e=>setDealer(e.target.value)}/>
+          <datalist id="dealer-options">{dealers.map(d=><option key={d.id} value={d.name}/>)}</datalist>
+        </div>
+        <div className="form-group"><div className="field-label">Product</div>
+          <input className="field-input" list="product-options" placeholder="Select or type…" value={product} onChange={e=>setProduct(e.target.value)}/>
+          <datalist id="product-options">{products.map(p=><option key={p.id} value={p.name}/>)}</datalist>
+        </div>
+      </div>
       <div className="input-row-3">
         <div className="form-group"><div className="field-label">Sold</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={sold} onChange={e=>setSold(e.target.value)}/></div>
         <div className="form-group"><div className="field-label">Collected</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={collected} onChange={e=>setCollected(e.target.value)}/></div>
