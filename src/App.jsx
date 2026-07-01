@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
-import { db } from "./services/firebase";
+import { db, authReady } from "./services/firebase";
 import { doc, onSnapshot, setDoc } from "firebase/firestore";
 import { isCloudinaryConfigured, uploadImage } from "./services/cloudinary";
 import { downloadDoc, printDoc } from "./services/pdf";
@@ -14,13 +14,17 @@ function usePersistentState(key, seed) {
   const ready = useRef(false);
   useEffect(() => {
     if (!db) { ready.current = true; return; }
-    const ref = doc(db, "appState", key);
-    const unsub = onSnapshot(ref, snap => {
-      if (snap.exists()) setState(snap.data().items ?? seed);
-      else setDoc(ref, { items: seed });
-      ready.current = true;
-    }, () => { ready.current = true; });
-    return unsub;
+    let unsub = () => {};
+    // Wait for anonymous auth so reads/writes pass the "must be signed in" rules.
+    authReady.then(() => {
+      const ref = doc(db, "appState", key);
+      unsub = onSnapshot(ref, snap => {
+        if (snap.exists()) setState(snap.data().items ?? seed);
+        else setDoc(ref, { items: seed });
+        ready.current = true;
+      }, () => { ready.current = true; });
+    });
+    return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   const set = useCallback(updater => {

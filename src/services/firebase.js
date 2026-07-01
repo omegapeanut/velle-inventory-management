@@ -3,6 +3,7 @@
 // controlled by Firestore security rules, not by hiding this config.
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth, signInAnonymously } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -18,3 +19,10 @@ const firebaseConfig = {
 export const isFirebaseConfigured = Boolean(firebaseConfig.projectId && firebaseConfig.apiKey);
 export const app = isFirebaseConfigured ? initializeApp(firebaseConfig) : null;
 export const db = app ? getFirestore(app) : null;
+export const auth = app ? getAuth(app) : null;
+
+// Sign in anonymously so Firestore rules can require an authenticated session.
+// Resolves before any read/write is attempted (see usePersistentState).
+export const authReady = auth
+  ? signInAnonymously(auth).then(() => true).catch(() => false)
+  : Promise.resolve(false);
