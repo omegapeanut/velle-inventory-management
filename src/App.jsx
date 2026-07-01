@@ -273,7 +273,6 @@ const seedLogs = (() => {
     const label = d.toLocaleDateString("en-SG", { day: "2-digit", month: "short", year: "numeric" });
     entries.push({
       sold: Math.floor(Math.random() * 30) + 10,
-      collected: Math.floor(Math.random() * 20) + 5,
       returned: Math.floor(Math.random() * 8),
       notes: "", photo: null,
       by: names[Math.floor(Math.random() * names.length)],
@@ -481,7 +480,7 @@ export default function App() {
             <div className="topbar-date">{todayStr()}</div>
           </div>
 
-          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} onAdd={() => setModal("log")} onGoStock={() => go("products")} />}
+          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} isAdmin={isAdmin} onAdd={() => setModal("log")} onGoStock={() => go("products")} />}
           {page === "daily" && <DailyPage logs={logs} onAdd={() => setModal("log")} />}
           {page === "damage" && <DamagePage damages={damages} onAdd={() => setModal("damage")} />}
           {page === "documents" && <DocumentsPage docs={docs} onAdd={t => { setDocType(t); setModal("doc"); }} />}
@@ -538,7 +537,7 @@ function LoginScreen({ users, onLogin }) {
             <div className="login-hero">Timeless craftsmanship,<br />kept in perfect order.</div>
             <div className="login-desc">Track daily stock movement, damage returns and documents for the Velle warehouse — all in one quiet, considered place.</div>
             <div className="login-features">
-              {["Daily sold, collected & returned tracking","Damage return photo reporting","Delivery orders, POs & monthly billing","Admin reports & real-time stock summary"].map(f => (
+              {["Daily delivered & returned tracking","Damage return photo reporting","Delivery orders, POs & monthly billing","Admin reports & real-time stock summary"].map(f => (
                 <div className="login-feat" key={f}><div className="feat-dot" />{f}</div>
               ))}
             </div>
@@ -573,10 +572,9 @@ function LoginScreen({ users, onLogin }) {
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function DashboardPage({ logs, damages, docs, products, onAdd, onGoStock }) {
+function DashboardPage({ logs, damages, docs, products, isAdmin, onAdd, onGoStock }) {
   const todayLogs = logs.filter(l => l.date === todayStr());
   const sold = todayLogs.reduce((s, l) => s + Number(l.sold), 0);
-  const collected = todayLogs.reduce((s, l) => s + Number(l.collected), 0);
   const returned = todayLogs.reduce((s, l) => s + Number(l.returned), 0);
   const lowStock = (products || []).filter(p => Number(p.stock) <= Number(p.threshold));
   const pendingDmg = damages.filter(d => d.status === "pending").length;
@@ -592,8 +590,7 @@ function DashboardPage({ logs, damages, docs, products, onAdd, onGoStock }) {
       const dayLogs = logs.filter(l => l.dateISO === iso);
       arr.push({
         day: label,
-        Sold: dayLogs.reduce((s, l) => s + Number(l.sold), 0),
-        Collected: dayLogs.reduce((s, l) => s + Number(l.collected), 0),
+        Delivered: dayLogs.reduce((s, l) => s + Number(l.sold), 0),
         Returned: dayLogs.reduce((s, l) => s + Number(l.returned), 0),
       });
     }
@@ -608,7 +605,7 @@ function DashboardPage({ logs, damages, docs, products, onAdd, onGoStock }) {
       const iso = d.toISOString().split("T")[0];
       const label = d.toLocaleDateString("en-SG", { day: "2-digit", month: "short" });
       const dayLogs = logs.filter(l => l.dateISO === iso);
-      arr.push({ day: label, Sold: dayLogs.reduce((s, l) => s + Number(l.sold), 0) });
+      arr.push({ day: label, Delivered: dayLogs.reduce((s, l) => s + Number(l.sold), 0) });
     }
     return arr;
   })();
@@ -626,15 +623,14 @@ function DashboardPage({ logs, damages, docs, products, onAdd, onGoStock }) {
   // Salesperson breakdown bar
   const spMap = {};
   logs.forEach(l => {
-    if (!spMap[l.by]) spMap[l.by] = { name: l.by, Sold: 0, Collected: 0 };
-    spMap[l.by].Sold += Number(l.sold);
-    spMap[l.by].Collected += Number(l.collected);
+    if (!spMap[l.by]) spMap[l.by] = { name: l.by, Delivered: 0 };
+    spMap[l.by].Delivered += Number(l.sold);
   });
   const spData = Object.values(spMap);
 
   return (
     <div className="content">
-      {lowStock.length > 0 && (
+      {isAdmin && lowStock.length > 0 && (
         <div className="alert-card" onClick={onGoStock}>
           <div className="alert-ic">⚠️</div>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -649,12 +645,7 @@ function DashboardPage({ logs, damages, docs, products, onAdd, onGoStock }) {
         <div className="kpi-card">
           <div className="kpi-icon" style={{ background: "#F3ECE0" }}>🛒</div>
           <div className="kpi-val" style={{ color: "#9A7B4E" }}>{sold}</div>
-          <div className="kpi-lbl">Sold Today</div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-icon" style={{ background: "#ECFDF5" }}>✅</div>
-          <div className="kpi-val" style={{ color: "#10B981" }}>{collected}</div>
-          <div className="kpi-lbl">Collected Today</div>
+          <div className="kpi-lbl">Delivered Today</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-icon" style={{ background: "#FEF2F2" }}>⚠️</div>
@@ -672,7 +663,7 @@ function DashboardPage({ logs, damages, docs, products, onAdd, onGoStock }) {
       <div className="chart-grid">
         {/* Bar chart - last 7 days */}
         <div className="card" style={{ gridColumn: "1 / -1" }}>
-          <div className="card-title">Last 7 Days — Sold / Collected / Returned</div>
+          <div className="card-title">Last 7 Days — Delivered / Returned</div>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={last7} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
@@ -680,8 +671,7 @@ function DashboardPage({ logs, damages, docs, products, onAdd, onGoStock }) {
               <YAxis tick={{ fontSize: 11, fill: "#8A8073" }} />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Sold" fill="#9A7B4E" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Collected" fill="#10B981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Delivered" fill="#9A7B4E" radius={[4, 4, 0, 0]} />
               <Bar dataKey="Returned" fill="#B5715A" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -690,14 +680,14 @@ function DashboardPage({ logs, damages, docs, products, onAdd, onGoStock }) {
         {/* Line chart - 14 day sales trend */}
         <div className="card">
           <div className="card-title">14-Day Sales Trend</div>
-          <div className="card-sub">Units sold per day</div>
+          <div className="card-sub">Units delivered per day</div>
           <ResponsiveContainer width="100%" height={180}>
             <LineChart data={trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
               <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#8A8073" }} interval={2} />
               <YAxis tick={{ fontSize: 10, fill: "#8A8073" }} />
               <Tooltip content={<CustomTooltip />} />
-              <Line type="monotone" dataKey="Sold" stroke="#9A7B4E" strokeWidth={2.5} dot={{ r: 3, fill: "#9A7B4E" }} />
+              <Line type="monotone" dataKey="Delivered" stroke="#9A7B4E" strokeWidth={2.5} dot={{ r: 3, fill: "#9A7B4E" }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -733,8 +723,7 @@ function DashboardPage({ logs, damages, docs, products, onAdd, onGoStock }) {
               <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "#221E1A", fontWeight: 600 }} width={60} />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Sold" fill="#9A7B4E" radius={[0, 4, 4, 0]} />
-              <Bar dataKey="Collected" fill="#10B981" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="Delivered" fill="#9A7B4E" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -750,7 +739,6 @@ function DailyPage({ logs, onAdd }) {
   const [filterDate, setFilterDate] = useState(todayISO());
   const filtered = filterDate ? logs.filter(l => l.dateISO === filterDate) : logs;
   const sold = filtered.reduce((s, l) => s + Number(l.sold), 0);
-  const collected = filtered.reduce((s, l) => s + Number(l.collected), 0);
   const returned = filtered.reduce((s, l) => s + Number(l.returned), 0);
   return (
     <div className="content">
@@ -761,8 +749,8 @@ function DailyPage({ logs, onAdd }) {
         </div>
         <input className="field-input" type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
         {filterDate && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 10 }}>
-            {[["Sold", sold, "#9A7B4E", "#F3ECE0"],["Collected", collected, "#10B981","#ECFDF5"],["Returned", returned, "#B5715A","#F4E9E3"]].map(([l,v,c,bg]) => (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+            {[["Delivered", sold, "#9A7B4E", "#F3ECE0"],["Returned", returned, "#B5715A","#F4E9E3"]].map(([l,v,c,bg]) => (
               <div key={l} style={{ background: bg, borderRadius: 10, padding: "12px 8px", textAlign: "center" }}>
                 <div style={{ fontSize: 24, fontWeight: 800, color: c }}>{v}</div>
                 <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>{l}</div>
@@ -789,8 +777,7 @@ function LogRow({ log }) {
         </div>
       )}
       <div className="nums-row">
-        <div className="num-block"><div className="num-val" style={{ color: "#9A7B4E" }}>{log.sold}</div><div className="num-lbl">sold</div></div>
-        <div className="num-block"><div className="num-val" style={{ color: "#10B981" }}>{log.collected}</div><div className="num-lbl">collected</div></div>
+        <div className="num-block"><div className="num-val" style={{ color: "#9A7B4E" }}>{log.sold}</div><div className="num-lbl">delivered</div></div>
         <div className="num-block"><div className="num-val" style={{ color: "#B5715A" }}>{log.returned}</div><div className="num-lbl">returned</div></div>
       </div>
       {log.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{log.notes}</div>}
@@ -860,12 +847,11 @@ function ReportsPage({ logs }) {
   });
   const byDate = {};
   filtered.forEach(l => {
-    if (!byDate[l.dateISO]) byDate[l.dateISO] = { sold: 0, collected: 0, returned: 0, date: l.date };
+    if (!byDate[l.dateISO]) byDate[l.dateISO] = { sold: 0, returned: 0, date: l.date };
     byDate[l.dateISO].sold += Number(l.sold);
-    byDate[l.dateISO].collected += Number(l.collected);
     byDate[l.dateISO].returned += Number(l.returned);
   });
-  const chartData = Object.entries(byDate).sort((a,b) => a[0].localeCompare(b[0])).map(([,v]) => ({ day: v.date, Sold: v.sold, Collected: v.collected, Returned: v.returned }));
+  const chartData = Object.entries(byDate).sort((a,b) => a[0].localeCompare(b[0])).map(([,v]) => ({ day: v.date, Delivered: v.sold, Returned: v.returned }));
   return (
     <div className="content">
       <div className="card">
@@ -881,8 +867,8 @@ function ReportsPage({ logs }) {
         </div>
         <button className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }} onClick={() => { setFrom(""); setTo(""); setBySP(""); }}>Clear</button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
-        {[["Sold", filtered.reduce((s,l)=>s+Number(l.sold),0), "#9A7B4E"],["Collected", filtered.reduce((s,l)=>s+Number(l.collected),0),"#10B981"],["Returned", filtered.reduce((s,l)=>s+Number(l.returned),0),"#B5715A"],["Entries", filtered.length,"#F59E0B"]].map(([lbl,val,clr]) => (
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        {[["Delivered", filtered.reduce((s,l)=>s+Number(l.sold),0), "#9A7B4E"],["Returned", filtered.reduce((s,l)=>s+Number(l.returned),0),"#B5715A"],["Entries", filtered.length,"#F59E0B"]].map(([lbl,val,clr]) => (
           <div key={lbl} className="kpi-card"><div className="kpi-val" style={{ color: clr, fontSize: 24 }}>{val}</div><div className="kpi-lbl">{lbl}</div></div>
         ))}
       </div>
@@ -896,8 +882,7 @@ function ReportsPage({ logs }) {
               <YAxis tick={{ fontSize: 10, fill: "#8A8073" }} />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Sold" fill="#9A7B4E" radius={[3,3,0,0]} />
-              <Bar dataKey="Collected" fill="#10B981" radius={[3,3,0,0]} />
+              <Bar dataKey="Delivered" fill="#9A7B4E" radius={[3,3,0,0]} />
               <Bar dataKey="Returned" fill="#B5715A" radius={[3,3,0,0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -983,9 +968,8 @@ function DocOverviewPage({ docs }) {
 function StockPage({ logs }) {
   const [opening, setOpening] = useState(0);
   const totalSold = logs.reduce((s,l)=>s+Number(l.sold),0);
-  const totalCollected = logs.reduce((s,l)=>s+Number(l.collected),0);
   const totalReturned = logs.reduce((s,l)=>s+Number(l.returned),0);
-  const current = Number(opening) - totalSold - totalCollected + totalReturned;
+  const current = Number(opening) - totalSold + totalReturned;
   return (
     <div className="content">
       <div className="card">
@@ -993,14 +977,14 @@ function StockPage({ logs }) {
         <input className="field-input" type="number" inputMode="numeric" placeholder="Enter opening stock count" value={opening} onChange={e=>setOpening(e.target.value)} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {[["Opening",Number(opening)||0,"#221E1A"],["Total Sold",totalSold,"#9A7B4E"],["Collected",totalCollected,"#10B981"],["Returned",totalReturned,"#B5715A"]].map(([l,v,c])=>(
+        {[["Opening",Number(opening)||0,"#221E1A"],["Total Delivered",totalSold,"#9A7B4E"],["Returned",totalReturned,"#B5715A"]].map(([l,v,c])=>(
           <div key={l} className="kpi-card"><div className="kpi-val" style={{ color: c, fontSize: 24 }}>{v}</div><div className="kpi-lbl">{l}</div></div>
         ))}
       </div>
       <div className="card" style={{ border: `2px solid ${current<0?"var(--red)":"var(--green)"}`, background: current<0?"var(--red-light)":"var(--green-light)" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: current<0?"var(--red)":"var(--green)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Current Stock</div>
         <div style={{ fontSize: 56, fontWeight: 900, color: current<0?"var(--red)":"var(--green)", textAlign: "center", padding: "12px 0" }}>{current}</div>
-        <div style={{ fontSize: 12, color: "#8A8073", textAlign: "center" }}>Opening − Sold − Collected + Returned</div>
+        <div style={{ fontSize: 12, color: "#8A8073", textAlign: "center" }}>Opening − Delivered + Returned</div>
       </div>
     </div>
   );
@@ -1183,14 +1167,14 @@ function SystemPage({ logs, damages, docs, dealers, products, tasks, onLoad, onC
 // ── MODALS ────────────────────────────────────────────────────────────────────
 function LogModal({ user, dealers, setDealers, products, setProducts, onSave, onClose }) {
   const [dealer,setDealer]=useState(""); const [product,setProduct]=useState("");
-  const [sold,setSold]=useState(""); const [collected,setCollected]=useState(""); const [returned,setReturned]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
+  const [sold,setSold]=useState(""); const [returned,setReturned]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
   const hp=e=>handlePhoto(e,setPhoto);
   const save=()=>{
-    if(!sold&&!collected&&!returned)return;
+    if(!sold&&!returned)return;
     const dl=dealer.trim(), pr=product.trim();
     if(dl&&!dealers.some(d=>d.name.toLowerCase()===dl.toLowerCase())) setDealers([...dealers,{id:Date.now(),name:dl}]);
     if(pr&&!products.some(p=>p.name.toLowerCase()===pr.toLowerCase())) setProducts([...products,{id:Date.now()+1,name:pr,stock:0,threshold:0}]);
-    onSave({dealer:dl,product:pr,sold:sold||0,collected:collected||0,returned:returned||0,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO(),time:fmtTime()});
+    onSave({dealer:dl,product:pr,sold:sold||0,returned:returned||0,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO(),time:fmtTime()});
   };
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
@@ -1205,9 +1189,8 @@ function LogModal({ user, dealers, setDealers, products, setProducts, onSave, on
           <datalist id="product-options">{products.map(p=><option key={p.id} value={p.name}/>)}</datalist>
         </div>
       </div>
-      <div className="input-row-3">
-        <div className="form-group"><div className="field-label">Sold</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={sold} onChange={e=>setSold(e.target.value)}/></div>
-        <div className="form-group"><div className="field-label">Collected</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={collected} onChange={e=>setCollected(e.target.value)}/></div>
+      <div className="input-row-2">
+        <div className="form-group"><div className="field-label">Delivered</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={sold} onChange={e=>setSold(e.target.value)}/></div>
         <div className="form-group"><div className="field-label">Returned</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={returned} onChange={e=>setReturned(e.target.value)}/></div>
       </div>
       <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="Any remarks..." value={notes} onChange={e=>setNotes(e.target.value)}/></div>
