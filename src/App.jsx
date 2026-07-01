@@ -413,6 +413,49 @@ const initProducts = [
   { id: 8, name: "CushRinse PP Bidet Seat Cover (M1FG-BC)", price: 70, stock: 25, threshold: 8 },
 ];
 
+// Full catalogue paste-in for Products → Bulk Add (prefilled as a convenience — edit or replace as needed).
+const PRESET_BULK_PRODUCTS = [
+  "150mm S Trap Velle Model One Toilet Bowl",
+  "250mm S Trap Velle Model One Toilet Bowl",
+  "180mm P Trap Velle Model One Toilet Bowl",
+  "150mm S Trap Velle Model One Toilet Bowl - WDI",
+  "250mm S Trap Velle Model One Toilet Bowl - WDI",
+  "180mm P Trap Velle Model One Toilet Bowl - WDI",
+  "150mm S Trap Velle Model One Toilet Bowl - Returned Broken / Defective",
+  "250mm S Trap Velle Model One Toilet Bowl - Returned Broken / Defective",
+  "180mm P Trap Velle Model One Toilet Bowl - Returned Broken / Defective",
+  "150mm S Trap Velle Model One Toilet Bowl - Factory Broken / Defective",
+  "250mm S Trap Velle Model One Toilet Bowl - Factory Broken / Defective",
+  "180mm P Trap Velle Model One Toilet Bowl - Factory Broken / Defective",
+  "150mm S Trap Velle Model One Toilet Bowl - WDI - Returned Broken / Defective",
+  "250mm S Trap Velle Model One Toilet Bowl - WDI - Returned Broken / Defective",
+  "180mm P Trap Velle Model One Toilet Bowl - WDI - Returned Broken / Defective",
+  "Aqua - Float Wall Hung Toilet Bowl - HWC-001",
+  "Aqua - Glide Wall Hung Toilet Bowl - HWC-002",
+  "Geberit Cistern Set",
+  "WDI Cistern Set",
+  "NeoRinse ( M1FG-SC ) UF Seat Cover",
+  "CushRinse ( M1FG-BC ) PP Bidet Seat Cover",
+  "UF Seat Cover Screw ( M1FG-SCS )",
+  "UF Seat Cover Fitting ( M1FG-SCF )",
+  '1" Offset Pan Collar ( IN-1 )',
+  '2" Offset Pan Collar ( IN-2 )',
+  "Flexible Pan Collar ( FLC )",
+  "Straight Pan Collar",
+  "Rigid A Collar ( RC-1 )",
+  "Rigid B Collar ( RC-2 )",
+  "Rigid C Collar ( RC-3 )",
+  "150mm S Trap Velle Model One Toilet Bowl ( Display Piece )",
+  "250mm S Trap Velle Model One Toilet Bowl ( Display Piece )",
+  "180mm P Trap Velle Model One Toilet Bowl ( Display Piece )",
+  "NeoRinse ( M1FG-SC ) UF Seat Cover ( Display Piece )",
+  "CushRinse ( M1FG-BC ) PP Bidet Seat Cover ( Display Piece )",
+  "Aqua - Float Wall Hung Toilet Bowl ( Display Piece )",
+  "Aqua - Glide Wall Hung Toilet Bowl ( Display Piece )",
+  '1" Offset Pan Collar 32 + 4pcs Package',
+  '2" Offset Pan Collar 32 + 4pcs Package',
+];
+
 // Daily tasks / servicing jobs.
 const initTasks = [
   { id: 1, title: "Service leaking basin mixer", type: "Servicing", details: "Site: ABC Construction, Blk 12", date: "01 Jul 2026", dateISO: "2026-07-01", by: "Admin", status: "open" },
@@ -763,7 +806,7 @@ export default function App() {
           {page === "doc-overview" && <DocOverviewPage docs={docs} />}
           {page === "stock" && <StockPage logs={logs} />}
           {page === "dealers" && <DealersPage dealers={dealers} setDealers={setDealers} users={users} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} onTrash={trashItem} />}
-          {page === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" kind="product" items={products} setItems={setProducts} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} />}
+          {page === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" kind="product" items={products} setItems={setProducts} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} onBulkAdd={() => setModal("bulk-products")} />}
           {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} onTrash={trashItem} />}
           {page === "trash" && <TrashPage trash={trash} me={user.name} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onRestore={restoreTrash} onPermanentDelete={permanentDelete} onEmpty={emptyTrash} />}
           {page === "install-jobs" && <InstallJobsPage jobs={installJobs} onAdd={() => setModal("install-job")} />}
@@ -789,6 +832,7 @@ export default function App() {
       {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={() => setModal(null)} />}
       {modal === "dealer" && <DealerModal edit={editDealer} dealers={dealers} setDealers={setDealers} users={users} isAdmin={isAdmin} me={user.name} onClose={() => setModal(null)} />}
       {modal === "product" && <CatalogModal noun="Product" edit={editProduct} items={products} setItems={setProducts} onClose={() => setModal(null)} />}
+      {modal === "bulk-products" && <BulkAddProductsModal products={products} setProducts={setProducts} onClose={() => setModal(null)} />}
       {modal === "task" && <TaskModal user={user} edit={editTask} tasks={tasks} setTasks={setTasks} onClose={() => setModal(null)} />}
     </>
   );
@@ -1572,11 +1616,17 @@ function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit, onTrash }) 
 }
 
 // ── CATALOG (Dealers / Products) ──────────────────────────────────────────────
-function CatalogPage({ title, noun, icon, kind, items, setItems, onAdd, onEdit, onTrash }) {
+function CatalogPage({ title, noun, icon, kind, items, setItems, onAdd, onEdit, onTrash, onBulkAdd }) {
   const remove = x => { setItems(items.filter(i => i.id !== x.id)); onTrash(kind, x); };
   return (
     <div className="content">
-      <div className="section-hdr"><div className="section-title">{title} ({items.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add {noun}</button></div>
+      <div className="section-hdr">
+        <div className="section-title">{title} ({items.length})</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {onBulkAdd && <button className="btn btn-ghost btn-sm" onClick={onBulkAdd}>+ Bulk Add</button>}
+          <button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add {noun}</button>
+        </div>
+      </div>
       {items.length === 0
         ? <div className="empty"><div className="empty-icon">{icon}</div><div className="empty-lbl">No {title.toLowerCase()} yet. Add your first one.</div></div>
         : items.map(x => {
@@ -1629,6 +1679,48 @@ function CatalogModal({ noun, edit, items, setItems, onClose }) {
         </div>
       </>)}
       <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+function BulkAddProductsModal({ products, setProducts, onClose }) {
+  const [text, setText] = useState(PRESET_BULK_PRODUCTS.join("\n"));
+  const [price, setPrice] = useState("10");
+  const [stock, setStock] = useState("20");
+  const [threshold, setThreshold] = useState("5");
+  const [result, setResult] = useState(null);
+  const doImport = () => {
+    const names = [...new Set(text.split("\n").map(s => s.trim()).filter(Boolean))];
+    const existing = new Set(products.map(p => p.name.toLowerCase()));
+    const toAdd = [];
+    let skipped = 0;
+    names.forEach((name, i) => {
+      if (existing.has(name.toLowerCase())) { skipped++; return; }
+      existing.add(name.toLowerCase());
+      toAdd.push({ id: Date.now() + i, name, price: Number(price) || 0, stock: Number(stock) || 0, threshold: Number(threshold) || 0 });
+    });
+    if (toAdd.length) setProducts([...products, ...toAdd]);
+    setResult({ added: toAdd.length, skipped });
+  };
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-handle" /><div className="modal-title">Bulk Add Products</div>
+      <div className="card-sub" style={{ marginBottom: 4 }}>One product name per line. Already-listed names (matched exactly, case-insensitive) are skipped automatically. Edit any line below before importing, or paste your own list to replace it.</div>
+      <div className="form-group">
+        <div className="field-label">Product Names ({text.split("\n").map(s => s.trim()).filter(Boolean).length})</div>
+        <textarea className="field-input" rows={10} style={{ resize: "vertical", fontFamily: "var(--font)", fontSize: 12.5 }} value={text} onChange={e => setText(e.target.value)} />
+      </div>
+      <div className="input-row-3">
+        <div className="form-group"><div className="field-label">Default Price</div><input className="field-input" type="number" inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} /></div>
+        <div className="form-group"><div className="field-label">Default Stock</div><input className="field-input" type="number" inputMode="numeric" value={stock} onChange={e => setStock(e.target.value)} /></div>
+        <div className="form-group"><div className="field-label">Low-Stock ≤</div><input className="field-input" type="number" inputMode="numeric" value={threshold} onChange={e => setThreshold(e.target.value)} /></div>
+      </div>
+      {result && (
+        <div className="login-err" style={{ color: "var(--green)", background: "var(--green-light)" }}>
+          Added {result.added} product{result.added === 1 ? "" : "s"}{result.skipped > 0 ? ` · skipped ${result.skipped} already in the catalogue` : ""}.
+        </div>
+      )}
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={doImport}>Import</button><button className="btn btn-ghost" onClick={onClose}>{result ? "Done" : "Cancel"}</button></div>
     </div></div>
   );
 }
