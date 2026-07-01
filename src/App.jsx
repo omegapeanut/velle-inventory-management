@@ -266,6 +266,33 @@ const STYLES = `
   .tooltip-label { font-weight: 700; color: var(--text); margin-bottom: 6px; font-size: 11px; }
   .tooltip-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
   .tooltip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  /* NOTICE BOARD */
+  .notice-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-top: 10px; background: var(--bg); }
+  .notice-hdr { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+  .notice-title { font-size: 14px; font-weight: 700; }
+  .notice-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .notice-msg { font-size: 13px; color: var(--text); margin-top: 8px; line-height: 1.55; white-space: pre-wrap; }
+  .notice-roster { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .notice-avatar { position: relative; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: white; background: #C9BFAF; opacity: 0.55; }
+  .notice-avatar.acked { background: linear-gradient(135deg, #9A7B4E, #B5715A); opacity: 1; box-shadow: 0 0 0 2px var(--green-light); }
+  .notice-check { position: absolute; bottom: -2px; right: -2px; background: var(--green); color: white; border-radius: 50%; width: 14px; height: 14px; font-size: 9px; display: flex; align-items: center; justify-content: center; border: 2px solid var(--surface); }
+
+  /* SALES CALENDAR */
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .cal-wd { font-size: 10px; font-weight: 700; color: var(--muted); text-align: center; padding: 4px 0; text-transform: uppercase; }
+  .cal-cell { min-height: 46px; border-radius: 8px; background: var(--bg); padding: 4px 5px; display: flex; flex-direction: column; gap: 2px; }
+  .cal-cell.empty { background: transparent; }
+  .cal-cell.today { background: var(--primary-light); border: 1.5px solid var(--primary); }
+  .cal-day { font-size: 11px; font-weight: 600; color: var(--text); }
+  .cal-nums { display: flex; gap: 3px; flex-wrap: wrap; }
+  .cal-d, .cal-r { font-size: 9.5px; font-weight: 700; border-radius: 6px; padding: 0 4px; }
+  .cal-d { color: #9A7B4E; background: #F3ECE0; }
+  .cal-r { color: #B5715A; background: #F4E9E3; }
+  .cal-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .cal-dot.d { background: #9A7B4E; }
+  .cal-dot.r { background: #B5715A; }
+  @media (max-width: 700px) { .cal-cell { min-height: 38px; padding: 3px 4px; } .cal-d, .cal-r { font-size: 8.5px; } }
 `;
 
 // ── SEED DATA ──────────────────────────────────────────────────────────────────
@@ -291,6 +318,7 @@ const seedLogs = (() => {
       const [product, price] = SEED_PRODUCTS[Math.floor(Math.random() * SEED_PRODUCTS.length)];
       const num = String(123000 + seq);
       entries.push({
+        id: 900000 + seq,
         dealer: SEED_DEALERS[Math.floor(Math.random() * SEED_DEALERS.length)],
         product, price,
         sold: 3 + Math.floor(Math.random() * 20),
@@ -308,14 +336,19 @@ const seedLogs = (() => {
 })();
 
 const seedDamages = [
-  { itemDesc: "WC Unit Model A", qty: 2, notes: "Cracked lid", photo: null, by: "Ali", date: "01 Jun 2026", dateISO: "2026-06-01", status: "pending" },
-  { itemDesc: "WC Seat Cover", qty: 1, notes: "Broken hinge", photo: null, by: "Raju", date: "10 Jun 2026", dateISO: "2026-06-10", status: "reviewed" },
+  { id: 910001, itemDesc: "WC Unit Model A", qty: 2, notes: "Cracked lid", photo: null, by: "Ali", date: "01 Jun 2026", dateISO: "2026-06-01", status: "pending" },
+  { id: 910002, itemDesc: "WC Seat Cover", qty: 1, notes: "Broken hinge", photo: null, by: "Raju", date: "10 Jun 2026", dateISO: "2026-06-10", status: "reviewed" },
 ];
 
 const seedDocs = [
-  { type: "DO", refNo: "DO-2026-001", party: "ABC Construction", amount: "1200.00", notes: "", photo: null, by: "Ali", date: "05 Jun 2026", dateISO: "2026-06-05" },
-  { type: "PO", refNo: "PO-2026-003", party: "WC Supplies Pte Ltd", amount: "4500.00", notes: "", photo: null, by: "Admin", date: "12 Jun 2026", dateISO: "2026-06-12" },
-  { type: "BILL", refNo: "INV-060-2026", party: "Logistics Co", amount: "890.00", notes: "June billing", photo: null, by: "Admin", date: "15 Jun 2026", dateISO: "2026-06-15" },
+  { id: 920001, type: "DO", refNo: "DO-2026-001", party: "ABC Construction", amount: "1200.00", notes: "", photo: null, by: "Ali", date: "05 Jun 2026", dateISO: "2026-06-05" },
+  { id: 920002, type: "PO", refNo: "PO-2026-003", party: "WC Supplies Pte Ltd", amount: "4500.00", notes: "", photo: null, by: "Admin", date: "12 Jun 2026", dateISO: "2026-06-12" },
+  { id: 920003, type: "BILL", refNo: "INV-060-2026", party: "Logistics Co", amount: "890.00", notes: "June billing", photo: null, by: "Admin", date: "15 Jun 2026", dateISO: "2026-06-15" },
+];
+
+// Notice board — admin-posted announcements that salespeople acknowledge.
+const initNotices = [
+  { id: 1, title: "Welcome to Velle Inventory Management", message: "Please review your daily orders each morning and acknowledge this notice so Admin knows you're up to date.", by: "Terence", date: "01 Jul 2026", dateISO: "2026-07-01", ackBy: [] },
 ];
 
 const initUsers = [
@@ -375,6 +408,7 @@ const NAV = [
   { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false },
   { id: "documents", label: "Documents", icon: "📄", admin: false },
   { id: "tasks", label: "Tasks & Servicing", icon: "🧰", admin: false },
+  { id: "trash", label: "Trash", icon: "🗑️", admin: false },
   { id: "reports", label: "Reports", icon: "📈", admin: true },
   { id: "damage-review", label: "Damage Review", icon: "🔍", admin: true },
   { id: "doc-overview", label: "Doc Overview", icon: "🗂️", admin: true },
@@ -452,6 +486,18 @@ export default function App() {
   const [tasks, setTasks] = usePersistentState("tasks", initTasks);
   const [editTask, setEditTask] = useState(null);
   const [lastOrder, setLastOrder] = useState(null);
+  const [trash, setTrash] = usePersistentState("trash", []);
+  const [notices, setNotices] = usePersistentState("notices", initNotices);
+
+  // Auto-purge trash items older than 90 days. Runs whenever trash changes
+  // (including on first load), and is a no-op once nothing is expired.
+  useEffect(() => {
+    if (!trash.length) return;
+    const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    const kept = trash.filter(t => new Date(t.deletedAt).getTime() > cutoff);
+    if (kept.length !== trash.length) setTrash(kept);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trash]);
 
   // Saving a New Order: record it and adjust warehouse stock (delivered out, returned back).
   const handlePurchase = e => {
@@ -476,10 +522,37 @@ export default function App() {
     setUsers(initUsers);
     setLogs(seedLogs); setDamages(seedDamages); setDocs(seedDocs);
     setDealers(initDealers); setProducts(initProducts); setTasks(initTasks);
+    setTrash([]); setNotices(initNotices);
   };
   const clearAllData = () => {
     setLogs([]); setDamages([]); setDocs([]); setDealers([]); setProducts([]); setTasks([]);
+    setTrash([]); setNotices([]);
   };
+
+  // ── TRASH ──
+  // Deleting anywhere in the app routes here instead of removing outright:
+  // the item moves to Trash (kept 90 days), tagged with who deleted it.
+  const trashItem = (kind, item) => setTrash([{ trashId: Date.now() + Math.random(), kind, item, by: user.name, deletedAt: new Date().toISOString() }, ...trash]);
+  const collections = { order: [logs, setLogs], damage: [damages, setDamages], document: [docs, setDocs], dealer: [dealers, setDealers], product: [products, setProducts], task: [tasks, setTasks], user: [users, setUsers] };
+  const restoreTrash = trashId => {
+    const t = trash.find(x => x.trashId === trashId);
+    if (!t) return;
+    const [list, setList] = collections[t.kind] || [];
+    if (setList) setList([t.item, ...list]);
+    setTrash(trash.filter(x => x.trashId !== trashId));
+  };
+  const permanentDelete = trashId => setTrash(trash.filter(x => x.trashId !== trashId));
+  const emptyTrash = () => setTrash([]);
+  const deleteLog = log => { setLogs(logs.filter(l => l !== log)); trashItem("order", log); };
+  const deleteDamage = d => { setDamages(damages.filter(x => x !== d)); trashItem("damage", d); };
+  const deleteDoc = d => { setDocs(docs.filter(x => x !== d)); trashItem("document", d); };
+
+  // ── NOTICE BOARD ──
+  const postNotice = (title, message) => setNotices([{ id: Date.now(), title, message, by: user.name, date: todayStr(), dateISO: todayISO(), ackBy: [] }, ...notices]);
+  const acknowledgeNotice = id => setNotices(notices.map(n => {
+    if (n.id !== id || (n.ackBy || []).some(a => a.name === user.name)) return n;
+    return { ...n, ackBy: [...(n.ackBy || []), { name: user.name, at: new Date().toISOString() }] };
+  }));
 
   return (
     <>
@@ -523,26 +596,28 @@ export default function App() {
             <div className="topbar-date">{todayStr()}</div>
           </div>
 
-          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("products")} />}
-          {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} />}
-          {page === "damage" && <DamagePage damages={damages} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} />}
-          {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} />}
+          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("products")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
+          {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} />}
+          {page === "damage" && <DamagePage damages={damages} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} />}
+          {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} onDelete={deleteDoc} />}
           {page === "reports" && <ReportsPage logs={logs} />}
           {page === "damage-review" && <DamageReviewPage damages={damages} setDamages={setDamages} />}
           {page === "doc-overview" && <DocOverviewPage docs={docs} />}
           {page === "stock" && <StockPage logs={logs} />}
-          {page === "dealers" && <CatalogPage title="Dealers" noun="Dealer" icon="🤝" items={dealers} setItems={setDealers} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} />}
-          {page === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" items={products} setItems={setProducts} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} />}
-          {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} />}
-          {page === "system" && isSuperAdmin && <SystemPage logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} onLoad={loadTestData} onClear={clearAllData} />}
-          {page === "users" && <UserMgmtPage users={users} setUsers={setUsers} currentUser={user} onAdd={() => { setEditUser(null); setModal("user"); }} onEdit={u => { setEditUser(u); setModal("user"); }} />}
+          {page === "dealers" && <CatalogPage title="Dealers" noun="Dealer" icon="🤝" kind="dealer" items={dealers} setItems={setDealers} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} onTrash={trashItem} />}
+          {page === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" kind="product" items={products} setItems={setProducts} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} />}
+          {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} onTrash={trashItem} />}
+          {page === "trash" && <TrashPage trash={trash} me={user.name} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onRestore={restoreTrash} onPermanentDelete={permanentDelete} onEmpty={emptyTrash} />}
+          {page === "system" && isSuperAdmin && <SystemPage logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} trash={trash} notices={notices} onLoad={loadTestData} onClear={clearAllData} />}
+          {page === "users" && <UserMgmtPage users={users} setUsers={setUsers} currentUser={user} onAdd={() => { setEditUser(null); setModal("user"); }} onEdit={u => { setEditUser(u); setModal("user"); }} onTrash={trashItem} />}
         </div>
       </div>
 
       {modal === "log" && <LogModal user={user} dealers={dealers} products={products} onSave={handlePurchase} onClose={() => setModal(null)} />}
       {modal === "order-created" && lastOrder && <OrderCreatedModal order={lastOrder} onClose={() => setModal(null)} />}
-      {modal === "damage" && <DamageModal user={user} onSave={e => { setDamages([e, ...damages]); setModal(null); }} onClose={() => setModal(null)} />}
-      {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([e, ...docs]); setModal(null); }} onClose={() => setModal(null)} />}
+      {modal === "damage" && <DamageModal user={user} onSave={e => { setDamages([{ id: Date.now(), ...e }, ...damages]); setModal(null); }} onClose={() => setModal(null)} />}
+      {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([{ id: Date.now(), ...e }, ...docs]); setModal(null); }} onClose={() => setModal(null)} />}
+      {modal === "notice" && <NoticeModal onSave={(title, message) => { postNotice(title, message); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={() => setModal(null)} />}
       {modal === "dealer" && <CatalogModal noun="Dealer" edit={editDealer} items={dealers} setItems={setDealers} onClose={() => setModal(null)} />}
       {modal === "product" && <CatalogModal noun="Product" edit={editProduct} items={products} setItems={setProducts} onClose={() => setModal(null)} />}
@@ -615,7 +690,7 @@ function LoginScreen({ users, onLogin }) {
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function DashboardPage({ logs, damages, docs, products, isAdmin, me, onAdd, onGoStock }) {
+function DashboardPage({ logs, damages, docs, products, users, notices, isAdmin, me, onAdd, onGoStock, onAck, onPostNotice }) {
   const [period, setPeriod] = useState("day");
   // Salespeople only ever see their own orders; admins see everything.
   const scoped = isAdmin ? logs : logs.filter(l => l.by === me);
@@ -693,6 +768,10 @@ function DashboardPage({ logs, damages, docs, products, isAdmin, me, onAdd, onGo
           <div className="alert-cta">Manage →</div>
         </div>
       )}
+
+      <NoticeBoard notices={notices} users={users} me={me} isAdmin={isAdmin} onAck={onAck} onPost={onPostNotice} />
+
+      <SalesCalendar logs={scoped} isAdmin={isAdmin} />
 
       {/* Period sales summary */}
       <div className="card">
@@ -830,8 +909,128 @@ function DashboardPage({ logs, damages, docs, products, isAdmin, me, onAdd, onGo
   );
 }
 
+// ── NOTICE BOARD ──────────────────────────────────────────────────────────────
+function NoticeBoard({ notices, users, me, isAdmin, onAck, onPost }) {
+  const salespeople = (users || []).filter(u => u.role === "salesperson");
+  return (
+    <div className="card">
+      <div className="section-hdr" style={{ marginBottom: notices.length ? 10 : 0 }}>
+        <div className="card-title" style={{ marginBottom: 0 }}>📌 Notice Board</div>
+        {isAdmin && <button className="btn btn-primary btn-sm" onClick={onPost}>+ Post Notice</button>}
+      </div>
+      {notices.length === 0 ? (
+        <div className="empty" style={{ padding: "20px 0" }}><div className="empty-lbl">No notices posted.</div></div>
+      ) : notices.map(n => {
+        const acked = (n.ackBy || []).map(a => a.name);
+        const iAcked = acked.includes(me);
+        return (
+          <div className="notice-card" key={n.id}>
+            <div className="notice-hdr">
+              <div>
+                <div className="notice-title">{n.title}</div>
+                <div className="notice-meta">{n.date} · by {n.by}</div>
+              </div>
+              {!isAdmin && (
+                <button className={`btn btn-xs ${iAcked ? "btn-green" : "btn-primary"}`} disabled={iAcked} onClick={() => onAck(n.id)}>
+                  {iAcked ? "✓ Acknowledged" : "Acknowledge"}
+                </button>
+              )}
+            </div>
+            <div className="notice-msg">{n.message}</div>
+            {salespeople.length > 0 && (
+              <div className="notice-roster">
+                {salespeople.map(sp => {
+                  const spAcked = acked.includes(sp.name);
+                  return (
+                    <div key={sp.id} className={`notice-avatar ${spAcked ? "acked" : "pending"}`} title={`${sp.name} — ${spAcked ? "Acknowledged" : "Not yet acknowledged"}`}>
+                      {sp.name[0]}
+                      {spAcked && <span className="notice-check">✓</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function NoticeModal({ onSave, onClose }) {
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const save = () => { if (!title.trim() || !message.trim()) return; onSave(title.trim(), message.trim()); };
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-handle" /><div className="modal-title">Post Notice</div>
+      <div className="form-group"><div className="field-label">Title</div><input className="field-input" autoFocus placeholder="e.g. Public holiday closure" value={title} onChange={e => setTitle(e.target.value)} /></div>
+      <div className="form-group"><div className="field-label">Message</div><textarea className="field-input" rows={4} style={{ resize: "vertical", fontFamily: "var(--font)" }} placeholder="Details for the team..." value={message} onChange={e => setMessage(e.target.value)} /></div>
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Post Notice</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+// ── SALES CALENDAR ────────────────────────────────────────────────────────────
+function SalesCalendar({ logs, isAdmin }) {
+  const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
+  const year = cursor.getFullYear(), month = cursor.getMonth();
+  const startWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // Monday-first
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const byDay = {};
+  logs.forEach(l => {
+    if (!l.dateISO) return;
+    const [y, m, d] = l.dateISO.split("-").map(Number);
+    if (y === year && m === month + 1) {
+      if (!byDay[d]) byDay[d] = { d: 0, r: 0 };
+      byDay[d].d += Number(l.sold) || 0;
+      byDay[d].r += Number(l.returned) || 0;
+    }
+  });
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day++) cells.push(day);
+  const monthLabel = cursor.toLocaleDateString("en-SG", { month: "long", year: "numeric" });
+  const todayKey = todayISO();
+  return (
+    <div className="card">
+      <div className="section-hdr" style={{ marginBottom: 10 }}>
+        <div className="card-title" style={{ marginBottom: 0 }}>{isAdmin ? "Sales Calendar — All Staff" : "My Sales Calendar"}</div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <button className="btn btn-ghost btn-xs" onClick={() => setCursor(new Date(year, month - 1, 1))}>‹</button>
+          <div style={{ fontSize: 12, fontWeight: 700, minWidth: 108, textAlign: "center" }}>{monthLabel}</div>
+          <button className="btn btn-ghost btn-xs" onClick={() => setCursor(new Date(year, month + 1, 1))}>›</button>
+        </div>
+      </div>
+      <div className="cal-grid">
+        {["M", "T", "W", "T", "F", "S", "S"].map((w, i) => <div key={i} className="cal-wd">{w}</div>)}
+        {cells.map((day, i) => {
+          if (day === null) return <div key={i} className="cal-cell empty" />;
+          const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          const agg = byDay[day];
+          return (
+            <div key={i} className={`cal-cell ${iso === todayKey ? "today" : ""}`}>
+              <div className="cal-day">{day}</div>
+              {agg && (agg.d > 0 || agg.r > 0) && (
+                <div className="cal-nums">
+                  {agg.d > 0 && <span className="cal-d">{agg.d}</span>}
+                  {agg.r > 0 && <span className="cal-r">{agg.r}</span>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#8A8073", marginTop: 10 }}>
+        <span><span className="cal-dot d" /> Delivered</span>
+        <span><span className="cal-dot r" /> Returned</span>
+      </div>
+    </div>
+  );
+}
+
 // ── DAILY LOG ─────────────────────────────────────────────────────────────────
-function DailyPage({ logs, me, isAdmin, onAdd }) {
+function DailyPage({ logs, me, isAdmin, onAdd, onDelete }) {
   const [filterDate, setFilterDate] = useState(todayISO());
   const mine = isAdmin ? logs : logs.filter(l => l.by === me);
   const filtered = filterDate ? mine.filter(l => l.dateISO === filterDate) : mine;
@@ -859,12 +1058,12 @@ function DailyPage({ logs, me, isAdmin, onAdd }) {
       </div>
       <div className="section-hdr"><div className="section-title">Orders ({filtered.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Order</button></div>
       {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📝</div><div className="empty-lbl">No orders for this date.</div></div>
-        : filtered.map((l, i) => <LogRow key={i} log={l} />)}
+        : filtered.map((l, i) => <LogRow key={l.id ?? i} log={l} onDelete={() => onDelete(l)} />)}
     </div>
   );
 }
 
-function LogRow({ log }) {
+function LogRow({ log, onDelete }) {
   return (
     <div className="list-item">
       <div className="item-meta"><div className="item-time">{log.date} · {log.time}</div><div className="item-by">{log.by}</div></div>
@@ -881,12 +1080,15 @@ function LogRow({ log }) {
       </div>
       {log.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{log.notes}</div>}
       {log.photo && <img src={log.photo} alt="entry" className="photo-preview" />}
-      {log.product && (
+      {(log.product || onDelete) && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "PO")}>⬇ PO</button>
-          <button className="btn btn-ghost btn-xs" onClick={() => printDoc(log, "PO")}>🖨 PO</button>
-          <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "DO")}>⬇ DO</button>
-          <button className="btn btn-ghost btn-xs" onClick={() => printDoc(log, "DO")}>🖨 DO</button>
+          {log.product && <>
+            <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "PO")}>⬇ PO</button>
+            <button className="btn btn-ghost btn-xs" onClick={() => printDoc(log, "PO")}>🖨 PO</button>
+            <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "DO")}>⬇ DO</button>
+            <button className="btn btn-ghost btn-xs" onClick={() => printDoc(log, "DO")}>🖨 DO</button>
+          </>}
+          {onDelete && <button className="btn btn-danger btn-xs" onClick={onDelete}>🗑 Delete</button>}
         </div>
       )}
     </div>
@@ -894,19 +1096,20 @@ function LogRow({ log }) {
 }
 
 // ── DAMAGE PAGE ───────────────────────────────────────────────────────────────
-function DamagePage({ damages, me, isAdmin, onAdd }) {
+function DamagePage({ damages, me, isAdmin, onAdd, onDelete }) {
   const list = isAdmin ? damages : damages.filter(d => d.by === me);
   return (
     <div className="content">
       <div className="section-hdr"><div className="section-title">Damage Returns ({list.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Report Damage</button></div>
       {list.length === 0 ? <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No damage returns filed.</div></div>
         : list.map((d, i) => (
-          <div className="list-item" key={i}>
+          <div className="list-item" key={d.id ?? i}>
             <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className={`badge badge-${d.status}`}>{d.status}</span></div>
             <div className="item-time">{d.date} · by {d.by}</div>
             {d.qty && <div style={{ fontSize: 13, fontWeight: 500 }}>Qty: {d.qty}</div>}
             {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
             {d.photo && <img src={d.photo} alt="dmg" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)" }} />}
+            <button className="btn btn-danger btn-xs" style={{ alignSelf: "flex-start" }} onClick={() => onDelete(d)}>🗑 Delete</button>
           </div>
         ))}
     </div>
@@ -914,7 +1117,7 @@ function DamagePage({ damages, me, isAdmin, onAdd }) {
 }
 
 // ── DOCUMENTS ─────────────────────────────────────────────────────────────────
-function DocumentsPage({ docs, me, isAdmin, onAdd }) {
+function DocumentsPage({ docs, me, isAdmin, onAdd, onDelete }) {
   const [filter, setFilter] = useState("ALL");
   const visible = isAdmin ? docs : docs.filter(d => d.by === me);
   const filtered = filter === "ALL" ? visible : visible.filter(d => d.type === filter);
@@ -931,13 +1134,14 @@ function DocumentsPage({ docs, me, isAdmin, onAdd }) {
       </div>
       {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📄</div><div className="empty-lbl">No documents yet.</div></div>
         : filtered.map((d, i) => (
-          <div className="list-item" key={i}>
+          <div className="list-item" key={d.id ?? i}>
             <div className="item-meta"><div><span className={`badge badge-${d.type.toLowerCase()}`}>{d.type}</span><div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>{d.refNo || "—"}</div></div><div className="item-time">{d.date}</div></div>
             {d.party && <div style={{ fontSize: 12, color: "#9A7B4E", fontWeight: 500 }}>{d.party}</div>}
             {d.amount && <div style={{ fontSize: 15, fontWeight: 700, color: "#10B981" }}>SGD {parseFloat(d.amount).toFixed(2)}</div>}
             {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
             {d.photo && <img src={d.photo} alt="doc" className="photo-preview" />}
             <div className="item-time">Filed by {d.by}</div>
+            <button className="btn btn-danger btn-xs" style={{ alignSelf: "flex-start" }} onClick={() => onDelete(d)}>🗑 Delete</button>
           </div>
         ))}
     </div>
@@ -1100,8 +1304,8 @@ function StockPage({ logs }) {
 }
 
 // ── USER MGMT ─────────────────────────────────────────────────────────────────
-function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit }) {
-  const remove = id => { if (id === currentUser.id) return; setUsers(users.filter(u=>u.id!==id)); };
+function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit, onTrash }) {
+  const remove = u => { if (u.id === currentUser.id) return; setUsers(users.filter(x=>x.id!==u.id)); onTrash("user", u); };
   // Built-in default staff not yet saved in the database (matched by PIN).
   const missingDefaults = initUsers.filter(d => !users.some(u => u.pin === d.pin));
   const syncDefaults = () => setUsers([...users, ...missingDefaults.map((d, i) => ({ ...d, id: Date.now() + i }))]);
@@ -1127,7 +1331,7 @@ function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit }) {
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             <button className="btn btn-ghost btn-xs" onClick={() => onEdit(u)}>Edit</button>
-            {u.id !== currentUser.id && <button className="btn btn-danger btn-xs" onClick={() => remove(u.id)}>Remove</button>}
+            {u.id !== currentUser.id && <button className="btn btn-danger btn-xs" onClick={() => remove(u)}>Remove</button>}
           </div>
         </div>
       ))}
@@ -1136,8 +1340,8 @@ function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit }) {
 }
 
 // ── CATALOG (Dealers / Products) ──────────────────────────────────────────────
-function CatalogPage({ title, noun, icon, items, setItems, onAdd, onEdit }) {
-  const remove = id => setItems(items.filter(x => x.id !== id));
+function CatalogPage({ title, noun, icon, kind, items, setItems, onAdd, onEdit, onTrash }) {
+  const remove = x => { setItems(items.filter(i => i.id !== x.id)); onTrash(kind, x); };
   return (
     <div className="content">
       <div className="section-hdr"><div className="section-title">{title} ({items.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add {noun}</button></div>
@@ -1158,7 +1362,7 @@ function CatalogPage({ title, noun, icon, items, setItems, onAdd, onEdit }) {
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 {low && <span className="badge badge-rejected">Low</span>}
                 <button className="btn btn-ghost btn-xs" onClick={() => onEdit(x)}>Edit</button>
-                <button className="btn btn-danger btn-xs" onClick={() => remove(x.id)}>Remove</button>
+                <button className="btn btn-danger btn-xs" onClick={() => remove(x)}>Remove</button>
               </div>
             </div>
           );
@@ -1198,9 +1402,9 @@ function CatalogModal({ noun, edit, items, setItems, onClose }) {
 }
 
 // ── TASKS / SERVICING ─────────────────────────────────────────────────────────
-function TasksPage({ tasks, setTasks, onAdd, onEdit }) {
+function TasksPage({ tasks, setTasks, onAdd, onEdit, onTrash }) {
   const toggle = id => setTasks(tasks.map(t => t.id === id ? { ...t, status: t.status === "done" ? "open" : "done" } : t));
-  const remove = id => setTasks(tasks.filter(t => t.id !== id));
+  const remove = t => { setTasks(tasks.filter(x => x.id !== t.id)); onTrash("task", t); };
   const open = tasks.filter(t => t.status !== "done");
   const done = tasks.filter(t => t.status === "done");
   const Row = t => (
@@ -1217,7 +1421,7 @@ function TasksPage({ tasks, setTasks, onAdd, onEdit }) {
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           <button className="btn btn-ghost btn-xs" onClick={() => onEdit(t)}>Edit</button>
-          <button className="btn btn-danger btn-xs" onClick={() => remove(t.id)}>Remove</button>
+          <button className="btn btn-danger btn-xs" onClick={() => remove(t)}>Remove</button>
         </div>
       </div>
     </div>
@@ -1257,11 +1461,71 @@ function TaskModal({ user, edit, tasks, setTasks, onClose }) {
   );
 }
 
+// ── TRASH ─────────────────────────────────────────────────────────────────────
+function trashLabel(t) {
+  const i = t.item || {};
+  switch (t.kind) {
+    case "order": return { icon: "📝", title: `${i.product || "Order"}${i.sold ? ` — ${i.sold} delivered` : ""}`, sub: i.dealer || "" };
+    case "damage": return { icon: "⚠️", title: i.itemDesc || "Damage report", sub: i.notes || "" };
+    case "document": return { icon: "📄", title: `${i.type || "Document"} ${i.refNo || ""}`.trim(), sub: i.party || "" };
+    case "dealer": return { icon: "🤝", title: i.name, sub: "Dealer" };
+    case "product": return { icon: "🛁", title: i.name, sub: "Product" };
+    case "task": return { icon: "🧰", title: i.title, sub: i.type || "" };
+    case "user": return { icon: "👤", title: i.name, sub: i.role || "" };
+    default: return { icon: "🗑️", title: "Item", sub: "" };
+  }
+}
+const daysLeft = deletedAt => Math.max(0, 90 - Math.floor((Date.now() - new Date(deletedAt).getTime()) / 86400000));
+
+function TrashPage({ trash, me, isAdmin, isSuperAdmin, onRestore, onPermanentDelete, onEmpty }) {
+  const list = isAdmin ? trash : trash.filter(t => t.by === me);
+  return (
+    <div className="content">
+      <div className="section-hdr">
+        <div className="section-title">Trash ({list.length})</div>
+        {isSuperAdmin && list.length > 0 && (
+          <button className="btn btn-danger btn-sm" onClick={() => window.confirm("Permanently delete ALL items in trash? This cannot be undone.") && onEmpty()}>Empty Trash</button>
+        )}
+      </div>
+      <div style={{ fontSize: 12, color: "#8A8073" }}>
+        Deleted items are kept here for 90 days before they're permanently removed{isAdmin ? "" : " — showing only items you deleted"}.
+      </div>
+      {list.length === 0 ? (
+        <div className="empty"><div className="empty-icon">🗑️</div><div className="empty-lbl">Trash is empty.</div></div>
+      ) : list.map(t => {
+        const { icon, title, sub } = trashLabel(t);
+        const dl = daysLeft(t.deletedAt);
+        return (
+          <div className="list-item" key={t.trashId}>
+            <div className="item-meta">
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                <div className="cat-ic">{icon}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{title || "—"}</div>
+                  {sub && <div style={{ fontSize: 11, color: "#8A8073" }}>{sub}</div>}
+                </div>
+              </div>
+              <span className="badge badge-pending">{dl}d left</span>
+            </div>
+            <div className="item-time">Deleted by {t.by} · {new Date(t.deletedAt).toLocaleString("en-SG")}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={() => onRestore(t.trashId)}>↺ Restore</button>
+              {isSuperAdmin && (
+                <button className="btn btn-danger btn-sm" onClick={() => window.confirm("Permanently delete this item? This cannot be undone.") && onPermanentDelete(t.trashId)}>Delete Forever</button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── DATA MANAGEMENT (super admin) ─────────────────────────────────────────────
-function SystemPage({ logs, damages, docs, dealers, products, tasks, onLoad, onClear }) {
-  const rows = [["Daily logs", logs.length], ["Damage", damages.length], ["Documents", docs.length], ["Dealers", dealers.length], ["Products", products.length], ["Tasks", tasks.length]];
-  const load = () => { if (window.confirm("Load sample test data? This overwrites current logs, documents, dealers, products and tasks. User accounts are kept.")) onLoad(); };
-  const clear = () => { if (window.confirm("Delete ALL business data (logs, documents, dealers, products, tasks)? User accounts are kept. This cannot be undone.")) onClear(); };
+function SystemPage({ logs, damages, docs, dealers, products, tasks, trash, notices, onLoad, onClear }) {
+  const rows = [["Daily logs", logs.length], ["Damage", damages.length], ["Documents", docs.length], ["Dealers", dealers.length], ["Products", products.length], ["Tasks", tasks.length], ["Trash", trash.length], ["Notices", notices.length]];
+  const load = () => { if (window.confirm("Load sample test data? This overwrites current logs, documents, dealers, products, tasks, trash and notices. User accounts are kept.")) onLoad(); };
+  const clear = () => { if (window.confirm("Delete ALL business data (logs, documents, dealers, products, tasks, trash, notices)? User accounts are kept. This cannot be undone.")) onClear(); };
   return (
     <div className="content">
       <div className="card">
@@ -1277,12 +1541,12 @@ function SystemPage({ logs, damages, docs, dealers, products, tasks, onLoad, onC
       </div>
       <div className="card">
         <div className="card-title">Load Test Data</div>
-        <div className="card-sub" style={{ marginBottom: 14 }}>Fills the app with sample dealers, products, daily logs, documents and tasks so you can try things out. Overwrites the current business data — user accounts are kept.</div>
+        <div className="card-sub" style={{ marginBottom: 14 }}>Fills the app with sample dealers, products, daily logs, documents, tasks, notices and an empty trash so you can try things out. Overwrites the current business data — user accounts are kept.</div>
         <button className="btn btn-primary" onClick={load}>Load Test Data</button>
       </div>
       <div className="card" style={{ borderColor: "#F6CDCD" }}>
         <div className="card-title" style={{ color: "#B91C1C" }}>Clear All Data</div>
-        <div className="card-sub" style={{ marginBottom: 14 }}>Permanently removes all logs, damage reports, documents, dealers, products and tasks, leaving a clean slate for real use. User accounts are kept. This cannot be undone.</div>
+        <div className="card-sub" style={{ marginBottom: 14 }}>Permanently removes all logs, damage reports, documents, dealers, products, tasks, trash and notices, leaving a clean slate for real use. User accounts are kept. This cannot be undone.</div>
         <button className="btn btn-danger" onClick={clear}>Clear All Data</button>
       </div>
     </div>
@@ -1307,6 +1571,7 @@ function LogModal({ user, dealers, products, onSave, onClose }) {
     if(!delivered&&!returned&&!exchanged){ setErr("Enter a delivered, returned or exchanged quantity."); return; }
     const num = String(Date.now()).slice(-6);
     onSave({
+      id: Date.now(),
       dealer, product, price,
       sold: Number(delivered)||0, returned: Number(returned)||0, exchanged: Number(exchanged)||0,
       notes, photo, by:user.name, date:todayStr(), dateISO:todayISO(), time:fmtTime(),
