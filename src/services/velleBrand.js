@@ -5,7 +5,7 @@ export const VELLE = {
   addr2: "#02-57 Bright Centre, Singapore",
   uen: "202439003W",
   gst: "202439003W",
-  phone: "",
+  phone: "+65 9145 7739",
   email: "",
   payNow: "PayNow to UEN 202439003W",
   bank: "OCBC Current Account 604-197251-001",
