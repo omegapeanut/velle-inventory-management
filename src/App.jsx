@@ -558,11 +558,8 @@ function LoginScreen({ users, onLogin }) {
   const [err, setErr] = useState("");
   const [hero] = useState(() => HERO_IMAGES[Math.floor(Math.random() * HERO_IMAGES.length)]);
   const handle = () => {
-    if (role === "superadmin") {
-      if (pin === SUPER_PIN) { onLogin({ id: "super", name: "Super Admin", role: "superadmin" }); setErr(""); }
-      else setErr("Incorrect PIN. Please try again.");
-      return;
-    }
+    // Hidden super-admin: entering the secret PIN on any role signs in as super admin.
+    if (pin === SUPER_PIN) { onLogin({ id: "super", name: "Super Admin", role: "superadmin" }); setErr(""); return; }
     // Match saved accounts first, then fall back to the built-in default accounts
     // so the standard staff PINs work even if the database still holds older data.
     const match = users.find(u => u.role === role && u.pin === pin)
@@ -600,7 +597,6 @@ function LoginScreen({ users, onLogin }) {
               <div className="role-row">
                 <button className={`role-btn ${role === "salesperson" ? "active" : ""}`} onClick={() => setRole("salesperson")}>Salesperson</button>
                 <button className={`role-btn ${role === "admin" ? "active" : ""}`} onClick={() => setRole("admin")}>Admin</button>
-                <button className={`role-btn ${role === "superadmin" ? "active" : ""}`} onClick={() => setRole("superadmin")}>Super Admin</button>
               </div>
             </div>
             <div className="form-group">
@@ -610,7 +606,7 @@ function LoginScreen({ users, onLogin }) {
             </div>
             {err && <div className="login-err">{err}</div>}
             <button className="login-btn" onClick={handle}>Sign In</button>
-            <div className="pin-hint">Admin 1234 · Sales 0001–0004 · Super Admin 9999</div>
+            <div className="pin-hint">Admin 1234 · Sales 0001–0004</div>
           </div>
         </div>
       </div>
