@@ -1102,9 +1102,23 @@ function StockPage({ logs }) {
 // ── USER MGMT ─────────────────────────────────────────────────────────────────
 function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit }) {
   const remove = id => { if (id === currentUser.id) return; setUsers(users.filter(u=>u.id!==id)); };
+  // Built-in default staff not yet saved in the database (matched by PIN).
+  const missingDefaults = initUsers.filter(d => !users.some(u => u.pin === d.pin));
+  const syncDefaults = () => setUsers([...users, ...missingDefaults.map((d, i) => ({ ...d, id: Date.now() + i }))]);
   return (
     <div className="content">
-      <div className="section-hdr"><div className="section-title">Users ({users.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add User</button></div>
+      <div className="section-hdr">
+        <div className="section-title">Users ({users.length})</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {missingDefaults.length > 0 && <button className="btn btn-ghost btn-sm" onClick={syncDefaults}>+ Sync default staff ({missingDefaults.length})</button>}
+          <button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add User</button>
+        </div>
+      </div>
+      {missingDefaults.length > 0 && (
+        <div style={{ fontSize: 12, color: "#8A8073", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px" }}>
+          {missingDefaults.length} built-in account{missingDefaults.length > 1 ? "s" : ""} ({missingDefaults.map(d => d.name).join(", ")}) can sign in but {missingDefaults.length > 1 ? "are" : "is"} not saved here yet. Tap <strong>Sync default staff</strong> to add {missingDefaults.length > 1 ? "them" : "it"} so you can edit or remove {missingDefaults.length > 1 ? "them" : "it"}.
+        </div>
+      )}
       {users.map(u => (
         <div className="user-row" key={u.id}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
