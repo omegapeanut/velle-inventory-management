@@ -115,7 +115,7 @@ const STYLES = `
   .nav-item:hover { background: var(--bg); color: var(--text); }
   .nav-item.active { background: var(--primary-light); color: var(--primary); font-weight: 600; }
   .nav-icon { font-size: 15px; width: 20px; text-align: center; }
-  .nav-footer { margin-top: auto; padding: 14px 16px; border-top: 1px solid var(--border); }
+  .sidenav-user { padding: 12px 16px; border-bottom: 1px solid var(--border); }
   .user-chip { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .avatar { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, #9A7B4E, #B5715A); color: white; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; }
   .user-nm { font-size: 13px; font-weight: 600; }
@@ -491,6 +491,13 @@ export default function App() {
             <div className="brand-logo">V</div>
             <div><div className="brand-name">Velle</div><div className="brand-sub">Inventory Management</div></div>
           </div>
+          <div className="sidenav-user">
+            <div className="user-chip">
+              <div className="avatar">{user.name[0]}</div>
+              <div style={{ minWidth: 0 }}><div className="user-nm">{user.name}</div><div className="user-rl">{user.role}</div></div>
+            </div>
+            <button className="logout-btn" onClick={() => setUser(null)}>Sign out</button>
+          </div>
           <div style={{ overflowY: "auto", flex: 1, paddingBottom: 8 }}>
             <div className="nav-section">General</div>
             {NAV.filter(n => !n.admin).map(n => (
@@ -506,13 +513,6 @@ export default function App() {
                 </button>
               ))}
             </>}
-          </div>
-          <div className="nav-footer">
-            <div className="user-chip">
-              <div className="avatar">{user.name[0]}</div>
-              <div><div className="user-nm">{user.name}</div><div className="user-rl">{user.role}</div></div>
-            </div>
-            <button className="logout-btn" onClick={() => setUser(null)}>Sign out</button>
           </div>
         </div>
 
