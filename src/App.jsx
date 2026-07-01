@@ -1,5 +1,49 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
+import { db } from "./services/firebase";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { isCloudinaryConfigured, uploadImage } from "./services/cloudinary";
+
+// Mirrors one collection to a single Firestore document ("appState/<key>") and keeps
+// it in sync across devices in real time. Setter matches useState (value or updater
+// function), so existing screens work unchanged. Falls back to plain in-memory state
+// when Firebase isn't configured.
+function usePersistentState(key, seed) {
+  const [state, setState] = useState(seed);
+  const ready = useRef(false);
+  useEffect(() => {
+    if (!db) { ready.current = true; return; }
+    const ref = doc(db, "appState", key);
+    const unsub = onSnapshot(ref, snap => {
+      if (snap.exists()) setState(snap.data().items ?? seed);
+      else setDoc(ref, { items: seed });
+      ready.current = true;
+    }, () => { ready.current = true; });
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  const set = useCallback(updater => {
+    setState(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      if (db && ready.current) setDoc(doc(db, "appState", key), { items: next }).catch(() => {});
+      return next;
+    });
+  }, [key]);
+  return [state, set];
+}
+
+// Photo upload: sends to Cloudinary when configured (stores a small URL), otherwise
+// falls back to an inline base64 data URL so the app keeps working.
+async function handlePhoto(e, setPhoto) {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (isCloudinaryConfigured) {
+    try { setPhoto(await uploadImage(f)); return; } catch (err) { /* fall through to base64 */ }
+  }
+  const r = new FileReader();
+  r.onload = ev => setPhoto(ev.target.result);
+  r.readAsDataURL(f);
+}
 
 const STYLES = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -345,18 +389,18 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [page, setPage] = useState("dashboard");
   const [navOpen, setNavOpen] = useState(false);
-  const [users, setUsers] = useState(initUsers);
-  const [logs, setLogs] = useState(seedLogs);
-  const [damages, setDamages] = useState(seedDamages);
-  const [docs, setDocs] = useState(seedDocs);
+  const [users, setUsers] = usePersistentState("users", initUsers);
+  const [logs, setLogs] = usePersistentState("logs", seedLogs);
+  const [damages, setDamages] = usePersistentState("damages", seedDamages);
+  const [docs, setDocs] = usePersistentState("docs", seedDocs);
   const [modal, setModal] = useState(null);
   const [docType, setDocType] = useState("DO");
   const [editUser, setEditUser] = useState(null);
-  const [dealers, setDealers] = useState(initDealers);
-  const [products, setProducts] = useState(initProducts);
+  const [dealers, setDealers] = usePersistentState("dealers", initDealers);
+  const [products, setProducts] = usePersistentState("products", initProducts);
   const [editDealer, setEditDealer] = useState(null);
   const [editProduct, setEditProduct] = useState(null);
-  const [tasks, setTasks] = useState(initTasks);
+  const [tasks, setTasks] = usePersistentState("tasks", initTasks);
   const [editTask, setEditTask] = useState(null);
 
   // Saving a purchase: record it, deduct warehouse stock, auto-generate a linked DO + PO.
@@ -1086,7 +1130,7 @@ function TaskModal({ user, edit, tasks, setTasks, onClose }) {
 function LogModal({ user, dealers, setDealers, products, setProducts, onSave, onClose }) {
   const [dealer,setDealer]=useState(""); const [product,setProduct]=useState("");
   const [sold,setSold]=useState(""); const [collected,setCollected]=useState(""); const [returned,setReturned]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
-  const hp=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setPhoto(ev.target.result);r.readAsDataURL(f);};
+  const hp=e=>handlePhoto(e,setPhoto);
   const save=()=>{
     if(!sold&&!collected&&!returned)return;
     const dl=dealer.trim(), pr=product.trim();
@@ -1123,7 +1167,7 @@ function LogModal({ user, dealers, setDealers, products, setProducts, onSave, on
 
 function DamageModal({ user, onSave, onClose }) {
   const [itemDesc,setItemDesc]=useState(""); const [qty,setQty]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
-  const hp=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setPhoto(ev.target.result);r.readAsDataURL(f);};
+  const hp=e=>handlePhoto(e,setPhoto);
   const save=()=>{if(!itemDesc)return;onSave({itemDesc,qty,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO(),status:"pending"});};
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
@@ -1141,7 +1185,7 @@ function DamageModal({ user, onSave, onClose }) {
 
 function DocModal({ user, type, onSave, onClose }) {
   const [refNo,setRefNo]=useState(""); const [party,setParty]=useState(""); const [amount,setAmount]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
-  const hp=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setPhoto(ev.target.result);r.readAsDataURL(f);};
+  const hp=e=>handlePhoto(e,setPhoto);
   const label=type==="DO"?"Delivery Order":type==="PO"?"Purchase Order":"Monthly Bill";
   const save=()=>onSave({type,refNo,party,amount,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO()});
   return (
