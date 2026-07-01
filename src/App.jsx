@@ -294,20 +294,27 @@ const STYLES = `
   .dealer-map { width: 100%; height: 160px; border: 1px solid var(--border); border-radius: 10px; }
 
   /* SALES CALENDAR */
-  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-  .cal-wd { font-size: 10px; font-weight: 700; color: var(--muted); text-align: center; padding: 4px 0; text-transform: uppercase; }
-  .cal-cell { min-height: 46px; border-radius: 8px; background: var(--bg); padding: 4px 5px; display: flex; flex-direction: column; gap: 2px; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+  .cal-wd { font-size: 10.5px; font-weight: 700; color: var(--muted); text-align: center; padding: 4px 0 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .cal-cell { width: 100%; min-height: 76px; border-radius: 10px; background: var(--bg); border: 1.5px solid transparent; padding: 6px 6px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; font-family: var(--font); cursor: default; transition: box-shadow 0.12s, border-color 0.12s; }
   .cal-cell.empty { background: transparent; }
-  .cal-cell.today { background: var(--primary-light); border: 1.5px solid var(--primary); }
-  .cal-day { font-size: 11px; font-weight: 600; color: var(--text); }
-  .cal-nums { display: flex; gap: 3px; flex-wrap: wrap; }
-  .cal-d, .cal-r { font-size: 9.5px; font-weight: 700; border-radius: 6px; padding: 0 4px; }
-  .cal-d { color: #9A7B4E; background: #F3ECE0; }
-  .cal-r { color: #B5715A; background: #F4E9E3; }
+  .cal-cell.today { border-color: var(--primary); }
+  .cal-cell.today .cal-day-num { color: var(--primary-dark); }
+  .cal-cell.selected { border-color: var(--primary); box-shadow: var(--shadow-md); }
+  .cal-cell.has-activity { cursor: pointer; }
+  .cal-day-num { font-size: 15px; font-weight: 700; color: var(--text); }
+  .cal-pills { display: flex; flex-direction: column; gap: 3px; width: 100%; }
+  .cal-pill { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 2px 6px; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+  .cal-pill.d { color: #9A7B4E; background: rgba(255,255,255,0.6); }
+  .cal-pill.r { color: #B5715A; background: rgba(255,255,255,0.6); }
   .cal-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
   .cal-dot.d { background: #9A7B4E; }
   .cal-dot.r { background: #B5715A; }
-  @media (max-width: 700px) { .cal-cell { min-height: 38px; padding: 3px 4px; } .cal-d, .cal-r { font-size: 8.5px; } }
+  .cal-detail { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; }
+  .cal-detail-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .cal-detail-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
+  .cal-detail-row:first-of-type { border-top: none; }
+  @media (max-width: 700px) { .cal-cell { min-height: 62px; padding: 5px; } .cal-day-num { font-size: 13px; } .cal-pill { font-size: 9.5px; padding: 1px 4px; } }
 `;
 
 // ── SEED DATA ──────────────────────────────────────────────────────────────────
@@ -1250,6 +1257,7 @@ function MyDealersCard({ dealers, logs, me }) {
 // ── SALES CALENDAR ────────────────────────────────────────────────────────────
 function SalesCalendar({ logs, isAdmin }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
+  const [selected, setSelected] = useState(null); // ISO date string, or null
   const year = cursor.getFullYear(), month = cursor.getMonth();
   const startWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // Monday-first
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -1258,49 +1266,103 @@ function SalesCalendar({ logs, isAdmin }) {
     if (!l.dateISO) return;
     const [y, m, d] = l.dateISO.split("-").map(Number);
     if (y === year && m === month + 1) {
-      if (!byDay[d]) byDay[d] = { d: 0, r: 0 };
+      if (!byDay[d]) byDay[d] = { d: 0, r: 0, n: 0 };
       byDay[d].d += Number(l.sold) || 0;
       byDay[d].r += Number(l.returned) || 0;
+      byDay[d].n += 1;
     }
   });
+  const maxDelivered = Math.max(1, ...Object.values(byDay).map(v => v.d));
   const cells = [];
   for (let i = 0; i < startWeekday; i++) cells.push(null);
   for (let day = 1; day <= daysInMonth; day++) cells.push(day);
   const monthLabel = cursor.toLocaleDateString("en-SG", { month: "long", year: "numeric" });
   const todayKey = todayISO();
+  const monthTotals = Object.values(byDay).reduce((s, v) => ({ d: s.d + v.d, r: s.r + v.r, n: s.n + v.n }), { d: 0, r: 0, n: 0 });
+  const selectedOrders = selected ? logs.filter(l => l.dateISO === selected) : [];
+  const jump = delta => { setCursor(new Date(year, month + delta, 1)); setSelected(null); };
   return (
     <div className="card">
-      <div className="section-hdr" style={{ marginBottom: 10 }}>
+      <div className="section-hdr" style={{ marginBottom: 12 }}>
         <div className="card-title" style={{ marginBottom: 0 }}>{isAdmin ? "Sales Calendar — All Staff" : "My Sales Calendar"}</div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button className="btn btn-ghost btn-xs" onClick={() => setCursor(new Date(year, month - 1, 1))}>‹</button>
-          <div style={{ fontSize: 12, fontWeight: 700, minWidth: 108, textAlign: "center" }}>{monthLabel}</div>
-          <button className="btn btn-ghost btn-xs" onClick={() => setCursor(new Date(year, month + 1, 1))}>›</button>
+          <button className="btn btn-ghost btn-xs" onClick={() => jump(-1)}>‹</button>
+          <div style={{ fontSize: 13, fontWeight: 700, minWidth: 120, textAlign: "center" }}>{monthLabel}</div>
+          <button className="btn btn-ghost btn-xs" onClick={() => jump(1)}>›</button>
         </div>
       </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+        <div style={{ background: "#F3ECE0", borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#9A7B4E" }}>{monthTotals.d}</div>
+          <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>Delivered</div>
+        </div>
+        <div style={{ background: "#F4E9E3", borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#B5715A" }}>{monthTotals.r}</div>
+          <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>Returned</div>
+        </div>
+        <div style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#221E1A" }}>{monthTotals.n}</div>
+          <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>Orders</div>
+        </div>
+      </div>
+
       <div className="cal-grid">
-        {["M", "T", "W", "T", "F", "S", "S"].map((w, i) => <div key={i} className="cal-wd">{w}</div>)}
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((w, i) => <div key={i} className="cal-wd">{w}</div>)}
         {cells.map((day, i) => {
           if (day === null) return <div key={i} className="cal-cell empty" />;
           const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
           const agg = byDay[day];
+          const hasActivity = agg && (agg.d > 0 || agg.r > 0);
+          const intensity = agg ? Math.min(1, agg.d / maxDelivered) : 0;
+          const bg = hasActivity ? `rgba(154,123,78,${0.08 + intensity * 0.22})` : undefined;
           return (
-            <div key={i} className={`cal-cell ${iso === todayKey ? "today" : ""}`}>
-              <div className="cal-day">{day}</div>
-              {agg && (agg.d > 0 || agg.r > 0) && (
-                <div className="cal-nums">
-                  {agg.d > 0 && <span className="cal-d">{agg.d}</span>}
-                  {agg.r > 0 && <span className="cal-r">{agg.r}</span>}
+            <button
+              key={i}
+              type="button"
+              className={`cal-cell ${iso === todayKey ? "today" : ""} ${iso === selected ? "selected" : ""} ${hasActivity ? "has-activity" : ""}`}
+              style={bg ? { background: bg } : undefined}
+              onClick={() => hasActivity && setSelected(selected === iso ? null : iso)}
+            >
+              <div className="cal-day-num">{day}</div>
+              {hasActivity && (
+                <div className="cal-pills">
+                  {agg.d > 0 && <div className="cal-pill d">🚚 {agg.d}</div>}
+                  {agg.r > 0 && <div className="cal-pill r">↩ {agg.r}</div>}
                 </div>
               )}
-            </div>
+            </button>
           );
         })}
       </div>
-      <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#8A8073", marginTop: 10 }}>
+
+      <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#8A8073", marginTop: 12 }}>
         <span><span className="cal-dot d" /> Delivered</span>
         <span><span className="cal-dot r" /> Returned</span>
+        <span style={{ marginLeft: "auto" }}>Tap a day for details</span>
       </div>
+
+      {selected && (
+        <div className="cal-detail">
+          <div className="cal-detail-hdr">
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{new Date(selected + "T00:00:00").toLocaleDateString("en-SG", { weekday: "long", day: "2-digit", month: "long" })}</div>
+            <button className="btn btn-ghost btn-xs" onClick={() => setSelected(null)}>Close</button>
+          </div>
+          {selectedOrders.length === 0 ? <div style={{ fontSize: 12, color: "#8A8073" }}>No orders on this day.</div>
+            : selectedOrders.map((l, i) => (
+              <div className="cal-detail-row" key={l.id ?? i}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{l.product || "—"}</div>
+                  <div style={{ fontSize: 11, color: "#8A8073" }}>{l.dealer || "—"}{l.by ? ` · ${l.by}` : ""}{l.time ? ` · ${l.time}` : ""}</div>
+                </div>
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  {Number(l.sold) > 0 && <span className="entry-tag">🚚 {l.sold}</span>}
+                  {Number(l.returned) > 0 && <span className="entry-tag product">↩ {l.returned}</span>}
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
     </div>
   );
 }
