@@ -428,7 +428,14 @@ function CustomTooltip({ active, payload, label }) {
 
 // ── APP ────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [user, setUser] = useState(null);
+  // Restore the signed-in user from local storage so a browser refresh doesn't log out.
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("velle_user")) || null; } catch { return null; }
+  });
+  useEffect(() => {
+    if (user) localStorage.setItem("velle_user", JSON.stringify(user));
+    else localStorage.removeItem("velle_user");
+  }, [user]);
   const [page, setPage] = useState("dashboard");
   const [navOpen, setNavOpen] = useState(false);
   const [users, setUsers] = usePersistentState("users", initUsers);
