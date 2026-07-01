@@ -1,0 +1,949 @@
+import { useState, useEffect } from "react";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
+
+const STYLES = `
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --primary: #9A7B4E;
+    --primary-dark: #806340;
+    --primary-light: #F3ECE0;
+    --bg: #F7F4EF;
+    --surface: #FFFFFF;
+    --border: #E8E1D6;
+    --text: #221E1A;
+    --muted: #8A8073;
+    --green: #10B981;
+    --red: #EF4444;
+    --orange: #F59E0B;
+    --purple: #B5715A;
+    --green-light: #ECFDF5;
+    --red-light: #FEF2F2;
+    --orange-light: #FFFBEB;
+    --purple-light: #F4E9E3;
+    --shadow: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --nav-w: 240px;
+    --font: 'Inter', sans-serif;
+    --serif: 'Cormorant Garamond', Georgia, serif;
+  }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); min-height: 100vh; }
+
+  .layout { display: flex; min-height: 100vh; }
+  .sidenav { width: var(--nav-w); background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 20; }
+  .main { margin-left: var(--nav-w); flex: 1; min-height: 100vh; }
+  .nav-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 19; }
+  @media (max-width: 700px) {
+    .sidenav { transform: translateX(-100%); transition: transform 0.25s; }
+    .sidenav.open { transform: translateX(0); }
+    .main { margin-left: 0; }
+    .nav-overlay.show { display: block; }
+    .hamburger { display: flex !important; }
+  }
+
+  /* SIDENAV */
+  .sidenav-brand { padding: 18px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .brand-logo { width: 38px; height: 38px; background: linear-gradient(135deg, #B0894F, #806340); border-radius: 10px; display: flex; align-items: center; justify-content: center; color: white; font-family: var(--serif); font-size: 20px; font-weight: 700; flex-shrink: 0; }
+  .brand-name { font-family: var(--serif); font-size: 19px; font-weight: 700; letter-spacing: 0.06em; color: var(--text); line-height: 1.1; }
+  .brand-sub { font-size: 10px; color: var(--muted); font-weight: 500; }
+  .nav-section { padding: 14px 16px 5px; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin: 1px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--muted); border: none; background: none; width: calc(100% - 16px); text-align: left; transition: all 0.12s; }
+  .nav-item:hover { background: var(--bg); color: var(--text); }
+  .nav-item.active { background: var(--primary-light); color: var(--primary); font-weight: 600; }
+  .nav-icon { font-size: 15px; width: 20px; text-align: center; }
+  .nav-footer { margin-top: auto; padding: 14px 16px; border-top: 1px solid var(--border); }
+  .user-chip { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, #9A7B4E, #B5715A); color: white; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; }
+  .user-nm { font-size: 13px; font-weight: 600; }
+  .user-rl { font-size: 11px; color: var(--muted); }
+  .logout-btn { width: 100%; padding: 8px; font-size: 12px; font-weight: 600; color: var(--red); background: var(--red-light); border: none; border-radius: 8px; cursor: pointer; font-family: var(--font); }
+
+  /* TOPBAR */
+  .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 20px; height: 56px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; box-shadow: var(--shadow); }
+  .hamburger { display: none; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--muted); }
+  .topbar-title { font-family: var(--serif); font-size: 21px; font-weight: 700; letter-spacing: 0.01em; }
+  .topbar-date { font-size: 12px; color: var(--muted); margin-left: auto; }
+
+  /* CONTENT */
+  .content { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* CARDS */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); }
+  .card-title { font-family: var(--serif); font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 14px; }
+  .card-sub { font-size: 11px; color: var(--muted); font-weight: 500; margin-top: 2px; }
+
+  /* KPI ROW */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+  .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; }
+  .kpi-icon { width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 17px; margin-bottom: 4px; }
+  .kpi-val { font-size: 28px; font-weight: 800; line-height: 1; }
+  .kpi-lbl { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .kpi-trend { font-size: 11px; font-weight: 600; margin-top: 2px; }
+
+  /* CHART GRID */
+  .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
+
+  /* FORM */
+  .field-label { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  .field-input { width: 100%; background: var(--bg); border: 1.5px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-family: var(--font); font-size: 14px; outline: none; transition: border-color 0.15s; }
+  .field-input:focus { border-color: var(--primary); background: white; }
+  .field-select { width: 100%; background: var(--bg); border: 1.5px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-family: var(--font); font-size: 14px; outline: none; }
+  .input-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .input-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .form-group { display: flex; flex-direction: column; }
+
+  /* BUTTONS */
+  .btn { padding: 10px 18px; font-family: var(--font); font-size: 13px; border-radius: 8px; cursor: pointer; border: none; font-weight: 600; transition: all 0.12s; }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:hover { background: var(--primary-dark); }
+  .btn-ghost { background: white; border: 1.5px solid var(--border); color: var(--muted); font-weight: 500; }
+  .btn-ghost:hover { border-color: var(--primary); color: var(--primary); }
+  .btn-danger { background: var(--red-light); border: none; color: var(--red); }
+  .btn-green { background: var(--green-light); border: none; color: var(--green); }
+  .btn-sm { padding: 7px 13px; font-size: 12px; }
+  .btn-xs { padding: 5px 10px; font-size: 11px; border-radius: 6px; }
+
+  /* BADGES */
+  .badge { display: inline-block; font-size: 10px; padding: 3px 9px; border-radius: 20px; font-weight: 600; }
+  .badge-do { background: var(--orange-light); color: var(--orange); }
+  .badge-po { background: var(--green-light); color: var(--green); }
+  .badge-bill { background: var(--purple-light); color: var(--purple); }
+  .badge-pending { background: #EFEAE1; color: var(--muted); }
+  .badge-reviewed { background: var(--green-light); color: var(--green); }
+  .badge-rejected { background: var(--red-light); color: var(--red); }
+
+  /* LOG / DOC / DAMAGE ITEMS */
+  .list-item { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; }
+  .item-meta { display: flex; justify-content: space-between; align-items: center; }
+  .item-time { font-size: 11px; color: var(--muted); }
+  .item-by { font-size: 11px; font-weight: 600; color: var(--primary); background: var(--primary-light); padding: 2px 8px; border-radius: 20px; }
+  .nums-row { display: flex; gap: 18px; }
+  .num-block { display: flex; align-items: baseline; gap: 4px; }
+  .num-val { font-size: 20px; font-weight: 700; }
+  .num-lbl { font-size: 10px; color: var(--muted); font-weight: 500; text-transform: uppercase; }
+
+  /* PHOTO */
+  .photo-zone { border: 2px dashed var(--border); border-radius: 10px; padding: 20px; text-align: center; cursor: pointer; position: relative; background: var(--bg); }
+  .photo-zone:hover { border-color: var(--primary); }
+  .photo-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .photo-preview { width: 100%; border-radius: 8px; max-height: 160px; object-fit: cover; }
+  .photo-icon { font-size: 26px; margin-bottom: 6px; }
+  .photo-lbl { font-size: 12px; color: var(--muted); }
+
+  /* MODAL */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.45); z-index: 100; display: flex; align-items: flex-end; justify-content: center; }
+  .modal { background: white; border-radius: 20px 20px 0 0; width: 100%; max-width: 520px; padding: 10px 20px 40px; display: flex; flex-direction: column; gap: 14px; max-height: 90vh; overflow-y: auto; }
+  .modal-handle { width: 40px; height: 4px; background: var(--border); border-radius: 2px; margin: 10px auto 6px; }
+  .modal-title { font-size: 17px; font-weight: 700; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+  /* SECTION HEADER */
+  .section-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+  .section-title { font-size: 14px; font-weight: 700; }
+
+  /* USER ROW */
+  .user-row { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; box-shadow: var(--shadow); }
+
+  /* EMPTY */
+  .empty { text-align: center; padding: 48px 20px; }
+  .empty-icon { font-size: 38px; margin-bottom: 10px; }
+  .empty-lbl { font-size: 13px; color: var(--muted); font-weight: 500; }
+
+  /* FILTER TABS */
+  .filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .divider { height: 1px; background: var(--border); }
+
+  /* LOGIN */
+  .login-page { min-height: 100vh; display: flex; background: var(--surface); }
+  .login-left { flex: 1.15; position: relative; display: flex; flex-direction: column; justify-content: space-between; padding: 56px 56px; color: #fff; background: #211E1A; overflow: hidden; }
+  .login-left-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .login-left-shade { position: absolute; inset: 0; background: linear-gradient(165deg, rgba(28,25,21,0.50) 0%, rgba(28,25,21,0.28) 38%, rgba(28,25,21,0.85) 100%); }
+  .login-left > .login-top, .login-left > .login-bottom { position: relative; z-index: 1; }
+  .login-wordmark { font-family: var(--serif); font-size: 30px; font-weight: 700; letter-spacing: 0.30em; }
+  .login-wordmark-sub { font-size: 10px; letter-spacing: 0.34em; text-transform: uppercase; opacity: 0.78; margin-top: 8px; }
+  .login-hero { font-family: var(--serif); font-size: 42px; font-weight: 600; line-height: 1.16; max-width: 460px; }
+  .login-desc { font-size: 14px; opacity: 0.82; line-height: 1.7; max-width: 380px; margin-top: 16px; }
+  .login-features { margin-top: 30px; display: flex; flex-direction: column; gap: 12px; }
+  .login-feat { display: flex; align-items: center; gap: 12px; font-size: 13px; opacity: 0.9; }
+  .feat-dot { width: 5px; height: 5px; background: #C9A86A; border-radius: 50%; flex-shrink: 0; }
+  .login-right { width: 460px; background: var(--surface); display: flex; flex-direction: column; justify-content: center; padding: 56px 56px; }
+  @media (max-width: 860px) { .login-left { display: none; } .login-right { width: 100%; padding: 48px 28px; } }
+  .login-right-tag { font-family: var(--serif); font-size: 26px; font-weight: 700; letter-spacing: 0.24em; color: var(--text); margin-bottom: 30px; }
+  .login-right-title { font-size: 24px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .login-right-sub { font-size: 14px; color: var(--muted); margin-bottom: 30px; }
+  .login-form { width: 100%; display: flex; flex-direction: column; gap: 18px; }
+  .role-row { display: flex; gap: 8px; }
+  .role-btn { flex: 1; padding: 11px; border: 1.5px solid var(--border); background: var(--bg); color: var(--muted); font-family: var(--font); font-size: 13px; font-weight: 500; border-radius: 10px; cursor: pointer; transition: all 0.12s; }
+  .role-btn.active { border-color: var(--primary); background: var(--primary-light); color: var(--primary-dark); font-weight: 700; }
+  .pin-input { width: 100%; background: var(--bg); border: 1.5px solid var(--border); border-radius: 10px; padding: 13px 14px; color: var(--text); font-family: var(--font); font-size: 15px; letter-spacing: 0.04em; text-align: center; outline: none; transition: border-color 0.15s, background 0.15s; }
+  .pin-input::placeholder { letter-spacing: normal; color: #B6AE9F; font-size: 14px; }
+  .pin-input:focus { border-color: var(--primary); background: #fff; }
+  .login-btn { width: 100%; padding: 15px; font-family: var(--font); font-size: 15px; font-weight: 700; letter-spacing: 0.02em; color: #fff; background: var(--primary); border: none; border-radius: 10px; cursor: pointer; transition: background 0.15s; }
+  .login-btn:hover { background: var(--primary-dark); }
+  .login-err { font-size: 12px; color: var(--red); background: var(--red-light); padding: 10px 14px; border-radius: 8px; font-weight: 500; text-align: center; }
+  .pin-hint { font-size: 11px; color: var(--muted); text-align: center; letter-spacing: 0.02em; }
+
+  /* RECHARTS */
+  .recharts-tooltip-wrapper { outline: none; }
+  .custom-tooltip { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; box-shadow: var(--shadow-md); font-family: var(--font); font-size: 12px; }
+  .tooltip-label { font-weight: 700; color: var(--text); margin-bottom: 6px; font-size: 11px; }
+  .tooltip-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+  .tooltip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+`;
+
+// ── SEED DATA ──────────────────────────────────────────────────────────────────
+const seedLogs = (() => {
+  const entries = [];
+  const names = ["Ali", "Raju", "Wei"];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const iso = d.toISOString().split("T")[0];
+    const label = d.toLocaleDateString("en-SG", { day: "2-digit", month: "short", year: "numeric" });
+    entries.push({
+      sold: Math.floor(Math.random() * 30) + 10,
+      collected: Math.floor(Math.random() * 20) + 5,
+      returned: Math.floor(Math.random() * 8),
+      notes: "", photo: null,
+      by: names[Math.floor(Math.random() * names.length)],
+      date: label, dateISO: iso,
+      time: "09:00"
+    });
+  }
+  return entries;
+})();
+
+const seedDamages = [
+  { itemDesc: "WC Unit Model A", qty: 2, notes: "Cracked lid", photo: null, by: "Ali", date: "01 Jun 2026", dateISO: "2026-06-01", status: "pending" },
+  { itemDesc: "WC Seat Cover", qty: 1, notes: "Broken hinge", photo: null, by: "Raju", date: "10 Jun 2026", dateISO: "2026-06-10", status: "reviewed" },
+];
+
+const seedDocs = [
+  { type: "DO", refNo: "DO-2026-001", party: "ABC Construction", amount: "1200.00", notes: "", photo: null, by: "Ali", date: "05 Jun 2026", dateISO: "2026-06-05" },
+  { type: "PO", refNo: "PO-2026-003", party: "WC Supplies Pte Ltd", amount: "4500.00", notes: "", photo: null, by: "Admin", date: "12 Jun 2026", dateISO: "2026-06-12" },
+  { type: "BILL", refNo: "INV-060-2026", party: "Logistics Co", amount: "890.00", notes: "June billing", photo: null, by: "Admin", date: "15 Jun 2026", dateISO: "2026-06-15" },
+];
+
+const initUsers = [
+  { id: 1, pin: "1234", role: "admin", name: "Admin" },
+  { id: 2, pin: "0000", role: "salesperson", name: "Sales 1" },
+];
+
+const fmtDate = d => d.toLocaleDateString("en-SG", { day: "2-digit", month: "short", year: "numeric" });
+const fmtTime = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
+const todayStr = () => fmtDate(new Date());
+const todayISO = () => new Date().toISOString().split("T")[0];
+
+const NAV = [
+  { id: "dashboard", label: "Dashboard", icon: "📊", admin: false },
+  { id: "daily", label: "Daily Log", icon: "📝", admin: false },
+  { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false },
+  { id: "documents", label: "Documents", icon: "📄", admin: false },
+  { id: "reports", label: "Reports", icon: "📈", admin: true },
+  { id: "damage-review", label: "Damage Review", icon: "🔍", admin: true },
+  { id: "doc-overview", label: "Doc Overview", icon: "🗂️", admin: true },
+  { id: "stock", label: "Stock Summary", icon: "📦", admin: true },
+  { id: "users", label: "User Management", icon: "👥", admin: true },
+];
+
+const CHART_COLORS = ["#9A7B4E", "#10B981", "#F59E0B", "#B5715A", "#EF4444"];
+
+// ── LOGIN HERO IMAGES ────────────────────────────────────────────────────────
+// One of these is picked at random every time the login screen mounts
+// (i.e. on each page refresh / sign-out), giving a fresh bathroom on each visit.
+//
+// ⚠️  PLACEHOLDERS: these are stock luxury-bathroom photos, NOT Velle products.
+//     I could not pull Velle's own photos — their Instagram is login-gated and
+//     their website refuses programmatic connections. To use only Velle products:
+//     download ~20 images from instagram.com/vellebathware into /public/heroes/
+//     and replace the URLs below with "/heroes/01.jpg", "/heroes/02.jpg", … —
+//     or paste the image URLs here and I'll wire them in.
+const HERO_IMG = id => `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=1600&q=80`;
+const HERO_FALLBACK = HERO_IMG("1604709177225-055f99402ea3");
+const HERO_IMAGES = [
+  "1604709177225-055f99402ea3", "1620626011761-996317b8d101", "1584622650111-993a426fbf0a",
+  "1631889993959-41b4e9c6e3c5", "1507652313519-d4e9174996dd", "1661107259637-4e1c55462428",
+  "1576698483491-8c43f0862543", "1696987007764-7f8b85dd3033", "1603825491103-bd638b1873b0",
+  "1733426107854-ee00a25d72a7", "1638799869566-b17fa794c4de", "1564540583246-934409427776",
+  "1572742482459-e04d6cfdd6f3", "1651951646668-46562cfb4518", "1531125227120-bac862d2aeb9",
+  "1581783748410-2c5377ad72ee", "1564540579594-0930edb6de43", "1629079447777-1e605162dc8d",
+  "1643949719317-4342d8d4031e", "1521783593447-5702b9bfd267", "1650894622076-e09ab837c502",
+  "1595514535116-d0401260e7cf", "1600488999585-e4364713b90a", "1628602813485-4e8b09442e98",
+].map(HERO_IMG);
+
+function CustomTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="custom-tooltip">
+      <div className="tooltip-label">{label}</div>
+      {payload.map((p, i) => (
+        <div className="tooltip-row" key={i}>
+          <div className="tooltip-dot" style={{ background: p.color }} />
+          <span style={{ color: "#8A8073" }}>{p.name}:</span>
+          <strong style={{ color: "#221E1A" }}>{p.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── APP ────────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [page, setPage] = useState("dashboard");
+  const [navOpen, setNavOpen] = useState(false);
+  const [users, setUsers] = useState(initUsers);
+  const [logs, setLogs] = useState(seedLogs);
+  const [damages, setDamages] = useState(seedDamages);
+  const [docs, setDocs] = useState(seedDocs);
+  const [modal, setModal] = useState(null);
+  const [docType, setDocType] = useState("DO");
+  const [editUser, setEditUser] = useState(null);
+
+  if (!user) return <LoginScreen users={users} onLogin={u => { setUser(u); setPage("dashboard"); }} />;
+
+  const go = id => { setPage(id); setNavOpen(false); };
+  const isAdmin = user.role === "admin";
+
+  return (
+    <>
+      <style>{STYLES}</style>
+      <div className="layout">
+        {navOpen && <div className="nav-overlay show" onClick={() => setNavOpen(false)} />}
+        <div className={`sidenav ${navOpen ? "open" : ""}`}>
+          <div className="sidenav-brand">
+            <div className="brand-logo">V</div>
+            <div><div className="brand-name">Velle</div><div className="brand-sub">Inventory Management</div></div>
+          </div>
+          <div style={{ overflowY: "auto", flex: 1, paddingBottom: 8 }}>
+            <div className="nav-section">General</div>
+            {NAV.filter(n => !n.admin).map(n => (
+              <button key={n.id} className={`nav-item ${page === n.id ? "active" : ""}`} onClick={() => go(n.id)}>
+                <span className="nav-icon">{n.icon}</span>{n.label}
+              </button>
+            ))}
+            {isAdmin && <>
+              <div className="nav-section">Admin</div>
+              {NAV.filter(n => n.admin).map(n => (
+                <button key={n.id} className={`nav-item ${page === n.id ? "active" : ""}`} onClick={() => go(n.id)}>
+                  <span className="nav-icon">{n.icon}</span>{n.label}
+                </button>
+              ))}
+            </>}
+          </div>
+          <div className="nav-footer">
+            <div className="user-chip">
+              <div className="avatar">{user.name[0]}</div>
+              <div><div className="user-nm">{user.name}</div><div className="user-rl">{user.role}</div></div>
+            </div>
+            <button className="logout-btn" onClick={() => setUser(null)}>Sign out</button>
+          </div>
+        </div>
+
+        <div className="main">
+          <div className="topbar">
+            <button className="hamburger" onClick={() => setNavOpen(o => !o)}>☰</button>
+            <div className="topbar-title">{NAV.find(n => n.id === page)?.label || "Dashboard"}</div>
+            <div className="topbar-date">{todayStr()}</div>
+          </div>
+
+          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} onAdd={() => setModal("log")} />}
+          {page === "daily" && <DailyPage logs={logs} onAdd={() => setModal("log")} />}
+          {page === "damage" && <DamagePage damages={damages} onAdd={() => setModal("damage")} />}
+          {page === "documents" && <DocumentsPage docs={docs} onAdd={t => { setDocType(t); setModal("doc"); }} />}
+          {page === "reports" && <ReportsPage logs={logs} />}
+          {page === "damage-review" && <DamageReviewPage damages={damages} setDamages={setDamages} />}
+          {page === "doc-overview" && <DocOverviewPage docs={docs} />}
+          {page === "stock" && <StockPage logs={logs} />}
+          {page === "users" && <UserMgmtPage users={users} setUsers={setUsers} currentUser={user} onAdd={() => { setEditUser(null); setModal("user"); }} onEdit={u => { setEditUser(u); setModal("user"); }} />}
+        </div>
+      </div>
+
+      {modal === "log" && <LogModal user={user} onSave={e => { setLogs([e, ...logs]); setModal(null); }} onClose={() => setModal(null)} />}
+      {modal === "damage" && <DamageModal user={user} onSave={e => { setDamages([e, ...damages]); setModal(null); }} onClose={() => setModal(null)} />}
+      {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([e, ...docs]); setModal(null); }} onClose={() => setModal(null)} />}
+      {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={() => setModal(null)} />}
+    </>
+  );
+}
+
+// ── LOGIN ──────────────────────────────────────────────────────────────────────
+function LoginScreen({ users, onLogin }) {
+  const [role, setRole] = useState("salesperson");
+  const [pin, setPin] = useState("");
+  const [err, setErr] = useState("");
+  const [hero] = useState(() => HERO_IMAGES[Math.floor(Math.random() * HERO_IMAGES.length)]);
+  const handle = () => {
+    const match = users.find(u => u.role === role && u.pin === pin);
+    if (match) { onLogin(match); setErr(""); } else setErr("Incorrect PIN. Please try again.");
+  };
+  return (
+    <>
+      <style>{STYLES}</style>
+      <div className="login-page">
+        <div className="login-left">
+          <img className="login-left-bg" src={hero} alt="" onError={e => { if (e.currentTarget.src !== HERO_FALLBACK) e.currentTarget.src = HERO_FALLBACK; }} />
+          <div className="login-left-shade" />
+          <div className="login-top">
+            <div className="login-wordmark">VELLE</div>
+            <div className="login-wordmark-sub">Inventory Management</div>
+          </div>
+          <div className="login-bottom">
+            <div className="login-hero">Timeless craftsmanship,<br />kept in perfect order.</div>
+            <div className="login-desc">Track daily stock movement, damage returns and documents for the Velle warehouse — all in one quiet, considered place.</div>
+            <div className="login-features">
+              {["Daily sold, collected & returned tracking","Damage return photo reporting","Delivery orders, POs & monthly billing","Admin reports & real-time stock summary"].map(f => (
+                <div className="login-feat" key={f}><div className="feat-dot" />{f}</div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="login-right">
+          <div className="login-right-tag">VELLE</div>
+          <div className="login-right-title">Welcome back</div>
+          <div className="login-right-sub">Sign in to your account to continue</div>
+          <div className="login-form">
+            <div className="form-group">
+              <div className="field-label">I am a</div>
+              <div className="role-row">
+                <button className={`role-btn ${role === "salesperson" ? "active" : ""}`} onClick={() => setRole("salesperson")}>Salesperson</button>
+                <button className={`role-btn ${role === "admin" ? "active" : ""}`} onClick={() => setRole("admin")}>Admin</button>
+              </div>
+            </div>
+            <div className="form-group">
+              <div className="field-label">PIN</div>
+              <input className="pin-input" type="password" inputMode="numeric" maxLength={6} placeholder="Enter PIN"
+                value={pin} onChange={e => setPin(e.target.value)} onKeyDown={e => e.key === "Enter" && handle()} />
+            </div>
+            {err && <div className="login-err">{err}</div>}
+            <button className="login-btn" onClick={handle}>Sign In</button>
+            <div className="pin-hint">Salesperson: 0000 · Admin: 1234</div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+function DashboardPage({ logs, damages, docs, onAdd }) {
+  const todayLogs = logs.filter(l => l.date === todayStr());
+  const sold = todayLogs.reduce((s, l) => s + Number(l.sold), 0);
+  const collected = todayLogs.reduce((s, l) => s + Number(l.collected), 0);
+  const returned = todayLogs.reduce((s, l) => s + Number(l.returned), 0);
+  const pendingDmg = damages.filter(d => d.status === "pending").length;
+  const totalBills = docs.filter(d => d.type === "BILL").reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+
+  // Last 7 days bar chart data
+  const last7 = (() => {
+    const arr = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const iso = d.toISOString().split("T")[0];
+      const label = d.toLocaleDateString("en-SG", { day: "2-digit", month: "short" });
+      const dayLogs = logs.filter(l => l.dateISO === iso);
+      arr.push({
+        day: label,
+        Sold: dayLogs.reduce((s, l) => s + Number(l.sold), 0),
+        Collected: dayLogs.reduce((s, l) => s + Number(l.collected), 0),
+        Returned: dayLogs.reduce((s, l) => s + Number(l.returned), 0),
+      });
+    }
+    return arr;
+  })();
+
+  // Last 14 days trend line
+  const trend = (() => {
+    const arr = [];
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const iso = d.toISOString().split("T")[0];
+      const label = d.toLocaleDateString("en-SG", { day: "2-digit", month: "short" });
+      const dayLogs = logs.filter(l => l.dateISO === iso);
+      arr.push({ day: label, Sold: dayLogs.reduce((s, l) => s + Number(l.sold), 0) });
+    }
+    return arr;
+  })();
+
+  // Pie: doc type breakdown
+  const doCnt = docs.filter(d => d.type === "DO").length;
+  const poCnt = docs.filter(d => d.type === "PO").length;
+  const billCnt = docs.filter(d => d.type === "BILL").length;
+  const pieData = [
+    { name: "Delivery Orders", value: doCnt || 0 },
+    { name: "Purchase Orders", value: poCnt || 0 },
+    { name: "Bills", value: billCnt || 0 },
+  ].filter(p => p.value > 0);
+
+  // Salesperson breakdown bar
+  const spMap = {};
+  logs.forEach(l => {
+    if (!spMap[l.by]) spMap[l.by] = { name: l.by, Sold: 0, Collected: 0 };
+    spMap[l.by].Sold += Number(l.sold);
+    spMap[l.by].Collected += Number(l.collected);
+  });
+  const spData = Object.values(spMap);
+
+  return (
+    <div className="content">
+      {/* KPI */}
+      <div className="kpi-grid">
+        <div className="kpi-card">
+          <div className="kpi-icon" style={{ background: "#F3ECE0" }}>🛒</div>
+          <div className="kpi-val" style={{ color: "#9A7B4E" }}>{sold}</div>
+          <div className="kpi-lbl">Sold Today</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-icon" style={{ background: "#ECFDF5" }}>✅</div>
+          <div className="kpi-val" style={{ color: "#10B981" }}>{collected}</div>
+          <div className="kpi-lbl">Collected Today</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-icon" style={{ background: "#FEF2F2" }}>⚠️</div>
+          <div className="kpi-val" style={{ color: "#EF4444" }}>{pendingDmg}</div>
+          <div className="kpi-lbl">Damage Pending</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-icon" style={{ background: "#F4E9E3" }}>💰</div>
+          <div className="kpi-val" style={{ color: "#B5715A", fontSize: 20 }}>SGD {totalBills.toFixed(0)}</div>
+          <div className="kpi-lbl">Total Billed</div>
+        </div>
+      </div>
+
+      {/* Main charts */}
+      <div className="chart-grid">
+        {/* Bar chart - last 7 days */}
+        <div className="card" style={{ gridColumn: "1 / -1" }}>
+          <div className="card-title">Last 7 Days — Sold / Collected / Returned</div>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={last7} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
+              <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#8A8073" }} />
+              <YAxis tick={{ fontSize: 11, fill: "#8A8073" }} />
+              <Tooltip content={<CustomTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Sold" fill="#9A7B4E" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Collected" fill="#10B981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Returned" fill="#B5715A" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Line chart - 14 day sales trend */}
+        <div className="card">
+          <div className="card-title">14-Day Sales Trend</div>
+          <div className="card-sub">Units sold per day</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
+              <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#8A8073" }} interval={2} />
+              <YAxis tick={{ fontSize: 10, fill: "#8A8073" }} />
+              <Tooltip content={<CustomTooltip />} />
+              <Line type="monotone" dataKey="Sold" stroke="#9A7B4E" strokeWidth={2.5} dot={{ r: 3, fill: "#9A7B4E" }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Pie chart - doc breakdown */}
+        <div className="card">
+          <div className="card-title">Document Breakdown</div>
+          <div className="card-sub">By type filed</div>
+          {pieData.length === 0 ? (
+            <div className="empty" style={{ padding: "30px 0" }}><div className="empty-lbl">No documents yet.</div></div>
+          ) : (
+            <ResponsiveContainer width="100%" height={180}>
+              <PieChart>
+                <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={4} dataKey="value">
+                  {pieData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i]} />)}
+                </Pie>
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      {/* Salesperson chart */}
+      {spData.length > 0 && (
+        <div className="card">
+          <div className="card-title">Performance by Salesperson</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={spData} layout="vertical" margin={{ top: 4, right: 20, left: 20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 11, fill: "#8A8073" }} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "#221E1A", fontWeight: 600 }} width={60} />
+              <Tooltip content={<CustomTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Sold" fill="#9A7B4E" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="Collected" fill="#10B981" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <button className="btn btn-primary" onClick={onAdd} style={{ width: "100%", padding: 14, fontSize: 15 }}>+ Add Today's Entry</button>
+    </div>
+  );
+}
+
+// ── DAILY LOG ─────────────────────────────────────────────────────────────────
+function DailyPage({ logs, onAdd }) {
+  const [filterDate, setFilterDate] = useState(todayISO());
+  const filtered = filterDate ? logs.filter(l => l.dateISO === filterDate) : logs;
+  const sold = filtered.reduce((s, l) => s + Number(l.sold), 0);
+  const collected = filtered.reduce((s, l) => s + Number(l.collected), 0);
+  const returned = filtered.reduce((s, l) => s + Number(l.returned), 0);
+  return (
+    <div className="content">
+      <div className="card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div className="card-title" style={{ marginBottom: 0 }}>Filter by Date</div>
+          <button className="btn btn-ghost btn-xs" onClick={() => setFilterDate("")}>Show All</button>
+        </div>
+        <input className="field-input" type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
+        {filterDate && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 10 }}>
+            {[["Sold", sold, "#9A7B4E", "#F3ECE0"],["Collected", collected, "#10B981","#ECFDF5"],["Returned", returned, "#B5715A","#F4E9E3"]].map(([l,v,c,bg]) => (
+              <div key={l} style={{ background: bg, borderRadius: 10, padding: "12px 8px", textAlign: "center" }}>
+                <div style={{ fontSize: 24, fontWeight: 800, color: c }}>{v}</div>
+                <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>{l}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="section-hdr"><div className="section-title">Entries ({filtered.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add Entry</button></div>
+      {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📝</div><div className="empty-lbl">No entries for this date.</div></div>
+        : filtered.map((l, i) => <LogRow key={i} log={l} />)}
+    </div>
+  );
+}
+
+function LogRow({ log }) {
+  return (
+    <div className="list-item">
+      <div className="item-meta"><div className="item-time">{log.date} · {log.time}</div><div className="item-by">{log.by}</div></div>
+      <div className="nums-row">
+        <div className="num-block"><div className="num-val" style={{ color: "#9A7B4E" }}>{log.sold}</div><div className="num-lbl">sold</div></div>
+        <div className="num-block"><div className="num-val" style={{ color: "#10B981" }}>{log.collected}</div><div className="num-lbl">collected</div></div>
+        <div className="num-block"><div className="num-val" style={{ color: "#B5715A" }}>{log.returned}</div><div className="num-lbl">returned</div></div>
+      </div>
+      {log.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{log.notes}</div>}
+      {log.photo && <img src={log.photo} alt="entry" className="photo-preview" />}
+    </div>
+  );
+}
+
+// ── DAMAGE PAGE ───────────────────────────────────────────────────────────────
+function DamagePage({ damages, onAdd }) {
+  return (
+    <div className="content">
+      <div className="section-hdr"><div className="section-title">Damage Returns ({damages.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Report Damage</button></div>
+      {damages.length === 0 ? <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No damage returns filed.</div></div>
+        : damages.map((d, i) => (
+          <div className="list-item" key={i}>
+            <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className={`badge badge-${d.status}`}>{d.status}</span></div>
+            <div className="item-time">{d.date} · by {d.by}</div>
+            {d.qty && <div style={{ fontSize: 13, fontWeight: 500 }}>Qty: {d.qty}</div>}
+            {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
+            {d.photo && <img src={d.photo} alt="dmg" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)" }} />}
+          </div>
+        ))}
+    </div>
+  );
+}
+
+// ── DOCUMENTS ─────────────────────────────────────────────────────────────────
+function DocumentsPage({ docs, onAdd }) {
+  const [filter, setFilter] = useState("ALL");
+  const filtered = filter === "ALL" ? docs : docs.filter(d => d.type === filter);
+  return (
+    <div className="content">
+      <div className="filter-tabs">
+        {["ALL","DO","PO","BILL"].map(t => <button key={t} className={`btn btn-sm ${filter === t ? "btn-primary" : "btn-ghost"}`} onClick={() => setFilter(t)}>{t}</button>)}
+      </div>
+      <div className="section-hdr">
+        <div className="section-title">Documents ({filtered.length})</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {["DO","PO","BILL"].map(t => <button key={t} className="btn btn-ghost btn-xs" onClick={() => onAdd(t)}>+ {t}</button>)}
+        </div>
+      </div>
+      {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📄</div><div className="empty-lbl">No documents yet.</div></div>
+        : filtered.map((d, i) => (
+          <div className="list-item" key={i}>
+            <div className="item-meta"><div><span className={`badge badge-${d.type.toLowerCase()}`}>{d.type}</span><div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>{d.refNo || "—"}</div></div><div className="item-time">{d.date}</div></div>
+            {d.party && <div style={{ fontSize: 12, color: "#9A7B4E", fontWeight: 500 }}>{d.party}</div>}
+            {d.amount && <div style={{ fontSize: 15, fontWeight: 700, color: "#10B981" }}>SGD {parseFloat(d.amount).toFixed(2)}</div>}
+            {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
+            {d.photo && <img src={d.photo} alt="doc" className="photo-preview" />}
+            <div className="item-time">Filed by {d.by}</div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+// ── REPORTS ───────────────────────────────────────────────────────────────────
+function ReportsPage({ logs }) {
+  const [from, setFrom] = useState(""); const [to, setTo] = useState(""); const [bySP, setBySP] = useState("");
+  const salespeople = [...new Set(logs.map(l => l.by))];
+  const filtered = logs.filter(l => {
+    if (from && l.dateISO < from) return false;
+    if (to && l.dateISO > to) return false;
+    if (bySP && l.by !== bySP) return false;
+    return true;
+  });
+  const byDate = {};
+  filtered.forEach(l => {
+    if (!byDate[l.dateISO]) byDate[l.dateISO] = { sold: 0, collected: 0, returned: 0, date: l.date };
+    byDate[l.dateISO].sold += Number(l.sold);
+    byDate[l.dateISO].collected += Number(l.collected);
+    byDate[l.dateISO].returned += Number(l.returned);
+  });
+  const chartData = Object.entries(byDate).sort((a,b) => a[0].localeCompare(b[0])).map(([,v]) => ({ day: v.date, Sold: v.sold, Collected: v.collected, Returned: v.returned }));
+  return (
+    <div className="content">
+      <div className="card">
+        <div className="card-title" style={{ marginBottom: 12 }}>Filters</div>
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">From</div><input className="field-input" type="date" value={from} onChange={e => setFrom(e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">To</div><input className="field-input" type="date" value={to} onChange={e => setTo(e.target.value)} /></div>
+        </div>
+        <div className="form-group"><div className="field-label">Salesperson</div>
+          <select className="field-select" value={bySP} onChange={e => setBySP(e.target.value)}>
+            <option value="">All</option>{salespeople.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <button className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }} onClick={() => { setFrom(""); setTo(""); setBySP(""); }}>Clear</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
+        {[["Sold", filtered.reduce((s,l)=>s+Number(l.sold),0), "#9A7B4E"],["Collected", filtered.reduce((s,l)=>s+Number(l.collected),0),"#10B981"],["Returned", filtered.reduce((s,l)=>s+Number(l.returned),0),"#B5715A"],["Entries", filtered.length,"#F59E0B"]].map(([lbl,val,clr]) => (
+          <div key={lbl} className="kpi-card"><div className="kpi-val" style={{ color: clr, fontSize: 24 }}>{val}</div><div className="kpi-lbl">{lbl}</div></div>
+        ))}
+      </div>
+      {chartData.length > 0 && (
+        <div className="card">
+          <div className="card-title">Movement Over Period</div>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
+              <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#8A8073" }} />
+              <YAxis tick={{ fontSize: 10, fill: "#8A8073" }} />
+              <Tooltip content={<CustomTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Sold" fill="#9A7B4E" radius={[3,3,0,0]} />
+              <Bar dataKey="Collected" fill="#10B981" radius={[3,3,0,0]} />
+              <Bar dataKey="Returned" fill="#B5715A" radius={[3,3,0,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📈</div><div className="empty-lbl">No data for selected filters.</div></div>
+        : filtered.map((l, i) => <LogRow key={i} log={l} />)}
+    </div>
+  );
+}
+
+// ── DAMAGE REVIEW ─────────────────────────────────────────────────────────────
+function DamageReviewPage({ damages, setDamages }) {
+  const update = (i, status) => setDamages(damages.map((d, idx) => idx === i ? { ...d, status } : d));
+  return (
+    <div className="content">
+      <div className="section-title">Pending ({damages.filter(d=>d.status==="pending").length})</div>
+      {damages.filter(d=>d.status==="pending").length === 0 && <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No pending damage returns.</div></div>}
+      {damages.map((d, i) => d.status === "pending" && (
+        <div className="list-item" key={i}>
+          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className="badge badge-pending">Pending</span></div>
+          <div className="item-time">{d.date} · by {d.by}</div>
+          {d.qty && <div style={{ fontSize: 13 }}>Qty: {d.qty}</div>}
+          {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
+          {d.photo && <img src={d.photo} alt="dmg" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8 }} />}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={() => update(i, "reviewed")}>Mark Reviewed</button>
+            <button className="btn btn-danger btn-sm" style={{ flex: 1 }} onClick={() => update(i, "rejected")}>Reject</button>
+          </div>
+        </div>
+      ))}
+      {damages.filter(d=>d.status!=="pending").length > 0 && <>
+        <div className="divider" />
+        <div className="section-title">Reviewed</div>
+        {damages.map((d,i) => d.status !== "pending" && (
+          <div className="list-item" key={i}>
+            <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className={`badge badge-${d.status}`}>{d.status}</span></div>
+            <div className="item-time">{d.date} · by {d.by}</div>
+          </div>
+        ))}
+      </>}
+    </div>
+  );
+}
+
+// ── DOC OVERVIEW ──────────────────────────────────────────────────────────────
+function DocOverviewPage({ docs }) {
+  const [type, setType] = useState("ALL"); const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+  const filtered = docs.filter(d => {
+    if (type !== "ALL" && d.type !== type) return false;
+    if (from && d.dateISO < from) return false;
+    if (to && d.dateISO > to) return false;
+    return true;
+  });
+  const totalAmt = filtered.reduce((s,d) => s+(parseFloat(d.amount)||0), 0);
+  return (
+    <div className="content">
+      <div className="card">
+        <div className="filter-tabs">{["ALL","DO","PO","BILL"].map(t=><button key={t} className={`btn btn-sm ${type===t?"btn-primary":"btn-ghost"}`} onClick={()=>setType(t)}>{t}</button>)}</div>
+        <div className="input-row-2" style={{ marginTop: 10 }}>
+          <div className="form-group"><div className="field-label">From</div><input className="field-input" type="date" value={from} onChange={e=>setFrom(e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">To</div><input className="field-input" type="date" value={to} onChange={e=>setTo(e.target.value)} /></div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#9A7B4E" }}>{filtered.length}</div><div className="kpi-lbl">Documents</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#B5715A", fontSize: 18 }}>SGD {totalAmt.toFixed(2)}</div><div className="kpi-lbl">Total Amount</div></div>
+      </div>
+      {filtered.length === 0 ? <div className="empty"><div className="empty-icon">🗂️</div><div className="empty-lbl">No documents match filters.</div></div>
+        : filtered.map((d,i) => (
+          <div className="list-item" key={i}>
+            <div className="item-meta"><div><span className={`badge badge-${d.type.toLowerCase()}`}>{d.type}</span><div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>{d.refNo||"—"}</div></div><div className="item-time">{d.date}</div></div>
+            {d.party && <div style={{ fontSize: 12, color: "#9A7B4E", fontWeight: 500 }}>{d.party}</div>}
+            {d.amount && <div style={{ fontSize: 14, fontWeight: 700, color: "#10B981" }}>SGD {parseFloat(d.amount).toFixed(2)}</div>}
+            <div className="item-time">Filed by {d.by}</div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+// ── STOCK ─────────────────────────────────────────────────────────────────────
+function StockPage({ logs }) {
+  const [opening, setOpening] = useState(0);
+  const totalSold = logs.reduce((s,l)=>s+Number(l.sold),0);
+  const totalCollected = logs.reduce((s,l)=>s+Number(l.collected),0);
+  const totalReturned = logs.reduce((s,l)=>s+Number(l.returned),0);
+  const current = Number(opening) - totalSold - totalCollected + totalReturned;
+  return (
+    <div className="content">
+      <div className="card">
+        <div className="card-title" style={{ marginBottom: 10 }}>Opening Stock</div>
+        <input className="field-input" type="number" inputMode="numeric" placeholder="Enter opening stock count" value={opening} onChange={e=>setOpening(e.target.value)} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {[["Opening",Number(opening)||0,"#221E1A"],["Total Sold",totalSold,"#9A7B4E"],["Collected",totalCollected,"#10B981"],["Returned",totalReturned,"#B5715A"]].map(([l,v,c])=>(
+          <div key={l} className="kpi-card"><div className="kpi-val" style={{ color: c, fontSize: 24 }}>{v}</div><div className="kpi-lbl">{l}</div></div>
+        ))}
+      </div>
+      <div className="card" style={{ border: `2px solid ${current<0?"var(--red)":"var(--green)"}`, background: current<0?"var(--red-light)":"var(--green-light)" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: current<0?"var(--red)":"var(--green)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Current Stock</div>
+        <div style={{ fontSize: 56, fontWeight: 900, color: current<0?"var(--red)":"var(--green)", textAlign: "center", padding: "12px 0" }}>{current}</div>
+        <div style={{ fontSize: 12, color: "#8A8073", textAlign: "center" }}>Opening − Sold − Collected + Returned</div>
+      </div>
+    </div>
+  );
+}
+
+// ── USER MGMT ─────────────────────────────────────────────────────────────────
+function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit }) {
+  const remove = id => { if (id === currentUser.id) return; setUsers(users.filter(u=>u.id!==id)); };
+  return (
+    <div className="content">
+      <div className="section-hdr"><div className="section-title">Users ({users.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add User</button></div>
+      {users.map(u => (
+        <div className="user-row" key={u.id}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div className="avatar" style={{ width: 38, height: 38 }}>{u.name[0]}</div>
+            <div><div style={{ fontSize: 14, fontWeight: 600 }}>{u.name}</div><div style={{ fontSize: 11, color: "#8A8073" }}>{u.role} · PIN: {"•".repeat(u.pin.length)}</div></div>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn btn-ghost btn-xs" onClick={() => onEdit(u)}>Edit</button>
+            {u.id !== currentUser.id && <button className="btn btn-danger btn-xs" onClick={() => remove(u.id)}>Remove</button>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── MODALS ────────────────────────────────────────────────────────────────────
+function LogModal({ user, onSave, onClose }) {
+  const [sold,setSold]=useState(""); const [collected,setCollected]=useState(""); const [returned,setReturned]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
+  const hp=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setPhoto(ev.target.result);r.readAsDataURL(f);};
+  const save=()=>{if(!sold&&!collected&&!returned)return;onSave({sold:sold||0,collected:collected||0,returned:returned||0,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO(),time:fmtTime()});};
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
+      <div className="modal-handle"/><div className="modal-title">Add Daily Entry</div>
+      <div className="input-row-3">
+        <div className="form-group"><div className="field-label">Sold</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={sold} onChange={e=>setSold(e.target.value)}/></div>
+        <div className="form-group"><div className="field-label">Collected</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={collected} onChange={e=>setCollected(e.target.value)}/></div>
+        <div className="form-group"><div className="field-label">Returned</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={returned} onChange={e=>setReturned(e.target.value)}/></div>
+      </div>
+      <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="Any remarks..." value={notes} onChange={e=>setNotes(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Photo (optional)</div>
+        <div className="photo-zone"><input type="file" accept="image/*" capture="environment" onChange={hp}/>{photo?<img src={photo} alt="p" className="photo-preview"/>:<><div className="photo-icon">📷</div><div className="photo-lbl">Tap to upload photo</div></>}</div>
+      </div>
+      <div className="modal-actions"><button className="btn btn-primary" style={{flex:1}} onClick={save}>Save Entry</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+function DamageModal({ user, onSave, onClose }) {
+  const [itemDesc,setItemDesc]=useState(""); const [qty,setQty]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
+  const hp=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setPhoto(ev.target.result);r.readAsDataURL(f);};
+  const save=()=>{if(!itemDesc)return;onSave({itemDesc,qty,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO(),status:"pending"});};
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
+      <div className="modal-handle"/><div className="modal-title">Report Damage Return</div>
+      <div className="form-group"><div className="field-label">Item Description</div><input className="field-input" placeholder="Describe the damaged item" value={itemDesc} onChange={e=>setItemDesc(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Quantity</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={qty} onChange={e=>setQty(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="Describe the damage..." value={notes} onChange={e=>setNotes(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Photo of Damage</div>
+        <div className="photo-zone"><input type="file" accept="image/*" capture="environment" onChange={hp}/>{photo?<img src={photo} alt="p" className="photo-preview"/>:<><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the damage</div></>}</div>
+      </div>
+      <div className="modal-actions"><button className="btn btn-primary" style={{flex:1}} onClick={save}>Submit Report</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+function DocModal({ user, type, onSave, onClose }) {
+  const [refNo,setRefNo]=useState(""); const [party,setParty]=useState(""); const [amount,setAmount]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
+  const hp=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setPhoto(ev.target.result);r.readAsDataURL(f);};
+  const label=type==="DO"?"Delivery Order":type==="PO"?"Purchase Order":"Monthly Bill";
+  const save=()=>onSave({type,refNo,party,amount,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO()});
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
+      <div className="modal-handle"/><div className="modal-title">Add {label}</div>
+      <div className="form-group"><div className="field-label">Reference No.</div><input className="field-input" placeholder={type==="DO"?"DO-XXXX":type==="PO"?"PO-XXXX":"INV-XXXX"} value={refNo} onChange={e=>setRefNo(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">{type==="DO"?"Delivered To":type==="PO"?"Supplier":"Billed By"}</div><input className="field-input" placeholder="Company / name" value={party} onChange={e=>setParty(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Amount (SGD)</div><input className="field-input" type="number" inputMode="decimal" placeholder="0.00" value={amount} onChange={e=>setAmount(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="Remarks..." value={notes} onChange={e=>setNotes(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Photo / Scan</div>
+        <div className="photo-zone"><input type="file" accept="image/*" capture="environment" onChange={hp}/>{photo?<img src={photo} alt="p" className="photo-preview"/>:<><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph document</div></>}</div>
+      </div>
+      <div className="modal-actions"><button className="btn btn-primary" style={{flex:1}} onClick={save}>Save Document</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+function UserModal({ editUser, users, setUsers, onClose }) {
+  const [name,setName]=useState(editUser?.name||""); const [role,setRole]=useState(editUser?.role||"salesperson"); const [pin,setPin]=useState(editUser?.pin||"");
+  const save=()=>{
+    if(!name||!pin)return;
+    if(editUser){setUsers(users.map(u=>u.id===editUser.id?{...u,name,role,pin}:u));}
+    else{setUsers([...users,{id:Date.now(),name,role,pin}]);}
+    onClose();
+  };
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
+      <div className="modal-handle"/><div className="modal-title">{editUser?"Edit User":"Add User"}</div>
+      <div className="form-group"><div className="field-label">Name</div><input className="field-input" placeholder="Display name" value={name} onChange={e=>setName(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Role</div>
+        <div className="role-row">
+          <button className={`role-btn ${role==="salesperson"?"active":""}`} onClick={()=>setRole("salesperson")}>Salesperson</button>
+          <button className={`role-btn ${role==="admin"?"active":""}`} onClick={()=>setRole("admin")}>Admin</button>
+        </div>
+      </div>
+      <div className="form-group"><div className="field-label">PIN</div><input className="field-input" type="password" inputMode="numeric" maxLength={6} placeholder="Set PIN" value={pin} onChange={e=>setPin(e.target.value)}/></div>
+      <div className="modal-actions"><button className="btn btn-primary" style={{flex:1}} onClick={save}>{editUser?"Save Changes":"Create User"}</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
