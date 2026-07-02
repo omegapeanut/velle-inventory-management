@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
-import { db, authReady } from "./services/firebase";
+import { db, authReady, signInWithPin, signOutUser, onSignedOut } from "./services/firebase";
 import { doc, onSnapshot, setDoc } from "firebase/firestore";
 import { isCloudinaryConfigured, uploadImage } from "./services/cloudinary";
 import { downloadDoc, printDoc, setCompanyInfo, downloadInvoice, printInvoice } from "./services/pdf";
@@ -8,22 +8,27 @@ import { downloadDoc, printDoc, setCompanyInfo, downloadInvoice, printInvoice } 
 // Mirrors one collection to a single Firestore document ("appState/<key>") and keeps
 // it in sync across devices in real time. Setter matches useState (value or updater
 // function), so existing screens work unchanged. Falls back to plain in-memory state
-// when Firebase isn't configured.
-function usePersistentState(key, seed) {
+// when Firebase isn't configured. Pass { public: true } for data that must be
+// readable before anyone is signed in (only the staff roster needs this, so the
+// login screen can check a PIN against it) — Firestore rules mirror that exemption.
+function usePersistentState(key, seed, opts) {
+  const isPublic = opts?.public;
   const [state, setState] = useState(seed);
   const ready = useRef(false);
   useEffect(() => {
     if (!db) { ready.current = true; return; }
     let unsub = () => {};
-    // Wait for anonymous auth so reads/writes pass the "must be signed in" rules.
-    authReady.then(() => {
+    const subscribe = () => {
       const ref = doc(db, "appState", key);
       unsub = onSnapshot(ref, snap => {
         if (snap.exists()) setState(snap.data().items ?? seed);
         else setDoc(ref, { items: seed });
         ready.current = true;
       }, () => { ready.current = true; });
-    });
+    };
+    // Wait for real staff sign-in (except the public roster) so reads/writes pass
+    // the "must be signed in" rules.
+    if (isPublic) subscribe(); else authReady.then(subscribe);
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
@@ -387,17 +392,13 @@ const initNotices = [
 ];
 
 const initUsers = [
-  { id: 1, pin: "1234", role: "admin", name: "Terence" },
+  { id: 1, pin: "1234", role: "superadmin", name: "Terence" },
   { id: 2, pin: "0001", role: "salesperson", name: "Ali" },
   { id: 3, pin: "0002", role: "salesperson", name: "Raju" },
   { id: 4, pin: "0003", role: "salesperson", name: "Wei" },
   { id: 5, pin: "0004", role: "salesperson", name: "Marcus" },
   { id: 6, pin: "5001", role: "installer", name: "BrightFix Installations" },
 ];
-
-// Built-in super admin (not stored in the database, so it always works).
-// Change this PIN to whatever you like.
-const SUPER_PIN = "9999";
 
 // Company details shown on PO/DO/Tax Invoice documents — edit in SuperAdmin → Company Settings.
 const DEFAULT_COMPANY_SETTINGS = {
@@ -645,10 +646,14 @@ export default function App() {
     if (user) localStorage.setItem("velle_user", JSON.stringify(user));
     else localStorage.removeItem("velle_user");
   }, [user]);
+  // If the underlying Firebase session drops (e.g. cleared storage) independently
+  // of this app-level record, fall back to the login screen instead of hanging on
+  // Firestore reads that will never authenticate.
+  useEffect(() => onSignedOut(() => setUser(null)), []);
   // Installers land on their job list, not the sales dashboard.
   const [page, setPage] = useState(() => (user?.role === "installer" ? "install-jobs-mine" : "dashboard"));
   const [navOpen, setNavOpen] = useState(false);
-  const [users, setUsers] = usePersistentState("users", initUsers);
+  const [users, setUsers] = usePersistentState("users", initUsers, { public: true });
   const [logs, setLogs] = usePersistentState("logs", seedLogs);
   const [damages, setDamages] = usePersistentState("damages", seedDamages);
   const [docs, setDocs] = usePersistentState("docs", seedDocs);
@@ -835,7 +840,7 @@ export default function App() {
               <div className="avatar">{user.name[0]}</div>
               <div style={{ minWidth: 0 }}><div className="user-nm">{user.name}</div><div className="user-rl">{user.role}</div></div>
             </div>
-            <button className="logout-btn" onClick={() => setUser(null)}>Sign out</button>
+            <button className="logout-btn" onClick={() => { signOutUser(); setUser(null); }}>Sign out</button>
           </div>
           <div style={{ overflowY: "auto", flex: 1, paddingBottom: 8 }}>
             <div className="nav-section">General</div>
@@ -908,15 +913,21 @@ function LoginScreen({ users, onLogin }) {
   const [role, setRole] = useState("salesperson");
   const [pin, setPin] = useState("");
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
   const [hero] = useState(() => HERO_IMAGES[Math.floor(Math.random() * HERO_IMAGES.length)]);
-  const handle = () => {
-    // Hidden super-admin: entering the secret PIN on any role signs in as super admin.
-    if (pin === SUPER_PIN) { onLogin({ id: "super", name: "Super Admin", role: "superadmin" }); setErr(""); return; }
+  const handle = async () => {
     // Match saved accounts first, then fall back to the built-in default accounts
     // so the standard staff PINs work even if the database still holds older data.
     const match = users.find(u => u.role === role && u.pin === pin)
       || initUsers.find(u => u.role === role && u.pin === pin);
-    if (match) { onLogin(match); setErr(""); } else setErr("Incorrect PIN. Please try again.");
+    if (!match) { setErr("Incorrect PIN. Please try again."); return; }
+    setBusy(true);
+    const res = await signInWithPin(role, pin);
+    setBusy(false);
+    if (res.ok) { onLogin(match); setErr(""); return; }
+    setErr(res.reason === "pin-changed"
+      ? "This PIN was recently changed. Please check with your admin."
+      : "Couldn't sign in — check your connection and try again.");
   };
   return (
     <>
@@ -950,15 +961,16 @@ function LoginScreen({ users, onLogin }) {
                 <button className={`role-btn ${role === "salesperson" ? "active" : ""}`} onClick={() => setRole("salesperson")}>Salesperson</button>
                 <button className={`role-btn ${role === "installer" ? "active" : ""}`} onClick={() => setRole("installer")}>Installer</button>
                 <button className={`role-btn ${role === "admin" ? "active" : ""}`} onClick={() => setRole("admin")}>Admin</button>
+                <button className={`role-btn ${role === "superadmin" ? "active" : ""}`} onClick={() => setRole("superadmin")}>Super Admin</button>
               </div>
             </div>
             <div className="form-group">
               <div className="field-label">PIN</div>
               <input className="pin-input" type="password" inputMode="numeric" maxLength={6} placeholder="Enter PIN"
-                value={pin} onChange={e => setPin(e.target.value)} onKeyDown={e => e.key === "Enter" && handle()} />
+                value={pin} onChange={e => setPin(e.target.value)} onKeyDown={e => e.key === "Enter" && !busy && handle()} />
             </div>
             {err && <div className="login-err">{err}</div>}
-            <button className="login-btn" onClick={handle}>Sign In</button>
+            <button className="login-btn" onClick={handle} disabled={busy}>{busy ? "Signing in…" : "Sign In"}</button>
             <div className="pin-hint">Admin 1234 · Sales 0001–0004</div>
           </div>
         </div>
@@ -2846,6 +2858,7 @@ function UserModal({ editUser, users, setUsers, onClose }) {
           <button className={`role-btn ${role==="salesperson"?"active":""}`} onClick={()=>setRole("salesperson")}>Salesperson</button>
           <button className={`role-btn ${role==="installer"?"active":""}`} onClick={()=>setRole("installer")}>Installer</button>
           <button className={`role-btn ${role==="admin"?"active":""}`} onClick={()=>setRole("admin")}>Admin</button>
+          <button className={`role-btn ${role==="superadmin"?"active":""}`} onClick={()=>setRole("superadmin")}>Super Admin</button>
         </div>
         {role === "installer" && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>One account per installer company — use the company name.</div>}
       </div>

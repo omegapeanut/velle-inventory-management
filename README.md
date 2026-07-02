@@ -37,7 +37,7 @@ Everything currently runs on in-memory React state (`useState`) — refreshing t
 ## What to ask Claude Code to do next
 
 1. **Persistence** — wire up Firebase Firestore (same pattern as the RenoLedger project) so logs, damage reports, documents, and users survive a refresh.
-2. **Real user accounts** — move off hardcoded PINs into a proper Firebase Auth or Firestore-backed user table.
+2. ~~**Real user accounts** — move off hardcoded PINs into a proper Firebase Auth or Firestore-backed user table.~~ Done — each staff PIN now signs into its own real Firebase Auth account behind the scenes (see `src/services/firebase.js`); the hardcoded super-admin PIN backdoor has been removed.
 3. **Photo storage** — currently photos are stored as base64 in memory; move to Firebase Storage so they don't bloat local state.
 4. **Code splitting** — the build is currently a single ~640kB JS bundle; recharts is the main contributor. Worth lazy-loading the dashboard charts.
 5. **Deploy** — push to Vercel or Netlify once persistence is in place.
