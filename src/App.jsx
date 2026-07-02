@@ -105,12 +105,6 @@ const STYLES = `
     .user-row { flex-wrap: wrap; gap: 10px; }
     .topbar-date { display: none; }
   }
-  /* Tablet / laptop: modal becomes a centered card instead of a bottom sheet */
-  @media (min-width: 700px) {
-    .modal-overlay { align-items: center; }
-    .modal { border-radius: 18px; max-height: 88vh; }
-    .modal-handle { display: none; }
-  }
 
   /* SIDENAV */
   .sidenav-brand { padding: 18px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
@@ -125,6 +119,7 @@ const STYLES = `
   .sidenav-user { padding: 12px 16px; border-bottom: 1px solid var(--border); }
   .user-chip { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .avatar { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, #9A7B4E, #B5715A); color: white; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; }
+  .avatar-photo { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border); }
   .user-nm { font-size: 13px; font-weight: 600; }
   .user-rl { font-size: 11px; color: var(--muted); }
   .logout-btn { width: 100%; padding: 8px; font-size: 12px; font-weight: 600; color: var(--red); background: var(--red-light); border: none; border-radius: 8px; cursor: pointer; font-family: var(--font); }
@@ -170,6 +165,7 @@ const STYLES = `
   .input-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
   .input-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .cat-ic { width: 38px; height: 38px; border-radius: 10px; background: var(--primary-light); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  .cat-photo { width: 38px; height: 38px; border-radius: 10px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border); }
   .entry-tags { display: flex; flex-wrap: wrap; gap: 6px; }
   .entry-tag { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; background: var(--primary-light); color: var(--primary-dark); }
   .entry-tag.product { background: #F4E9E3; color: #8A5340; }
@@ -229,6 +225,13 @@ const STYLES = `
   .modal-handle { width: 40px; height: 4px; background: var(--border); border-radius: 2px; margin: 10px auto 6px; }
   .modal-title { font-size: 17px; font-weight: 700; }
   .modal-actions { display: flex; gap: 8px; margin-top: 4px; }
+  /* Tablet / laptop: modal becomes a centered card instead of a bottom sheet.
+     Must come after the base .modal-overlay rule above so it actually wins. */
+  @media (min-width: 700px) {
+    .modal-overlay { align-items: center; }
+    .modal { border-radius: 18px; max-height: 88vh; }
+    .modal-handle { display: none; }
+  }
 
   /* SECTION HEADER */
   .section-hdr { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 2px; }
@@ -290,8 +293,11 @@ const STYLES = `
   .notice-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .notice-msg { font-size: 13px; color: var(--text); margin-top: 8px; line-height: 1.55; white-space: pre-wrap; }
   .notice-roster { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-  .notice-avatar { position: relative; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: white; background: #C9BFAF; opacity: 0.55; }
+  .notice-avatar-wrap { position: relative; width: 30px; height: 30px; flex-shrink: 0; }
+  .notice-avatar { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: white; background: #C9BFAF; opacity: 0.55; }
   .notice-avatar.acked { background: linear-gradient(135deg, #9A7B4E, #B5715A); opacity: 1; box-shadow: 0 0 0 2px var(--green-light); }
+  .notice-avatar-img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; opacity: 0.55; filter: grayscale(65%); }
+  .notice-avatar-img.acked { opacity: 1; filter: none; box-shadow: 0 0 0 2px var(--green-light); }
   .notice-check { position: absolute; bottom: -2px; right: -2px; background: var(--green); color: white; border-radius: 50%; width: 14px; height: 14px; font-size: 9px; display: flex; align-items: center; justify-content: center; border: 2px solid var(--surface); }
 
   /* TARGETS */
@@ -832,7 +838,7 @@ export default function App() {
           </div>
           <div className="sidenav-user">
             <div className="user-chip">
-              <div className="avatar">{user.name[0]}</div>
+              {user.photo ? <img src={user.photo} alt={user.name} className="avatar-photo" /> : <div className="avatar">{user.name[0]}</div>}
               <div style={{ minWidth: 0 }}><div className="user-nm">{user.name}</div><div className="user-rl">{user.role}</div></div>
             </div>
             <button className="logout-btn" onClick={() => setUser(null)}>Sign out</button>
@@ -1249,8 +1255,10 @@ function NoticeBoard({ notices, users, me, isAdmin, onAck, onPost }) {
                 {salespeople.map(sp => {
                   const spAcked = acked.includes(sp.name);
                   return (
-                    <div key={sp.id} className={`notice-avatar ${spAcked ? "acked" : "pending"}`} title={`${sp.name} — ${spAcked ? "Acknowledged" : "Not yet acknowledged"}`}>
-                      {sp.name[0]}
+                    <div key={sp.id} className="notice-avatar-wrap" title={`${sp.name} — ${spAcked ? "Acknowledged" : "Not yet acknowledged"}`}>
+                      {sp.photo
+                        ? <img src={sp.photo} alt={sp.name} className={`notice-avatar-img ${spAcked ? "acked" : "pending"}`} />
+                        : <div className={`notice-avatar ${spAcked ? "acked" : "pending"}`}>{sp.name[0]}</div>}
                       {spAcked && <span className="notice-check">✓</span>}
                     </div>
                   );
@@ -1725,7 +1733,7 @@ function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit, onTrash }) 
       {users.map(u => (
         <div className="user-row" key={u.id}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div className="avatar" style={{ width: 38, height: 38 }}>{u.name[0]}</div>
+            {u.photo ? <img src={u.photo} alt={u.name} className="avatar-photo" style={{ width: 38, height: 38 }} /> : <div className="avatar" style={{ width: 38, height: 38 }}>{u.name[0]}</div>}
             <div><div style={{ fontSize: 14, fontWeight: 600 }}>{u.name}</div><div style={{ fontSize: 11, color: "#8A8073" }}>{u.role} · PIN: {"•".repeat(u.pin.length)}</div></div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
@@ -1758,7 +1766,7 @@ function CatalogPage({ title, noun, icon, kind, items, setItems, onAdd, onEdit, 
           return (
             <div className="user-row" key={x.id}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-                <div className="cat-ic">{icon}</div>
+                {x.photo ? <img src={x.photo} alt={x.name} className="cat-photo" /> : <div className="cat-ic">{icon}</div>}
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{x.name}</div>
                   {hasStock && <div style={{ fontSize: 11, color: "#8A8073" }}>{x.price ? `$${x.price} · ` : ""}In stock: <strong style={{ color: low ? "#EF4444" : "#221E1A" }}>{x.stock}</strong> · alert ≤ {x.threshold}</div>}
@@ -1782,10 +1790,12 @@ function CatalogModal({ noun, edit, items, setItems, onClose }) {
   const [price, setPrice] = useState(edit?.price ?? "");
   const [stock, setStock] = useState(edit?.stock ?? "");
   const [threshold, setThreshold] = useState(edit?.threshold ?? "");
+  const [photo, setPhoto] = useState(edit?.photo || null);
+  const hp = e => handlePhoto(e, setPhoto);
   const save = () => {
     const v = name.trim();
     if (!v) return;
-    const extra = isProduct ? { price: Number(price) || 0, stock: Number(stock) || 0, threshold: Number(threshold) || 0 } : {};
+    const extra = isProduct ? { price: Number(price) || 0, stock: Number(stock) || 0, threshold: Number(threshold) || 0, photo } : {};
     if (edit) setItems(items.map(x => x.id === edit.id ? { ...x, name: v, ...extra } : x));
     else if (!items.some(x => x.name.toLowerCase() === v.toLowerCase())) setItems([...items, { id: Date.now(), name: v, ...extra }]);
     onClose();
@@ -1799,6 +1809,9 @@ function CatalogModal({ noun, edit, items, setItems, onClose }) {
         <div className="input-row-2">
           <div className="form-group"><div className="field-label">{edit ? "Current Stock" : "Opening Stock"}</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={stock} onChange={e => setStock(e.target.value)} /></div>
           <div className="form-group"><div className="field-label">Low-Stock Alert ≤</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={threshold} onChange={e => setThreshold(e.target.value)} /></div>
+        </div>
+        <div className="form-group"><div className="field-label">Product Photo</div>
+          <div className="photo-zone"><input type="file" accept="image/*" onChange={hp} />{photo ? <img src={photo} alt="product" className="photo-preview" /> : <><div className="photo-icon">🛁</div><div className="photo-lbl">Tap to upload a product photo</div></>}</div>
         </div>
       </>)}
       <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
@@ -2831,15 +2844,20 @@ function DocModal({ user, type, onSave, onClose }) {
 
 function UserModal({ editUser, users, setUsers, onClose }) {
   const [name,setName]=useState(editUser?.name||""); const [role,setRole]=useState(editUser?.role||"salesperson"); const [pin,setPin]=useState(editUser?.pin||"");
+  const [photo,setPhoto]=useState(editUser?.photo||null);
+  const hp=e=>handlePhoto(e,setPhoto);
   const save=()=>{
     if(!name||!pin)return;
-    if(editUser){setUsers(users.map(u=>u.id===editUser.id?{...u,name,role,pin}:u));}
-    else{setUsers([...users,{id:Date.now(),name,role,pin}]);}
+    if(editUser){setUsers(users.map(u=>u.id===editUser.id?{...u,name,role,pin,photo}:u));}
+    else{setUsers([...users,{id:Date.now(),name,role,pin,photo}]);}
     onClose();
   };
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
       <div className="modal-handle"/><div className="modal-title">{editUser?"Edit User":"Add User"}</div>
+      <div className="form-group"><div className="field-label">Photo</div>
+        <div className="photo-zone"><input type="file" accept="image/*" onChange={hp}/>{photo?<img src={photo} alt="user" className="photo-preview"/>:<><div className="photo-icon">🙂</div><div className="photo-lbl">Tap to upload a photo</div></>}</div>
+      </div>
       <div className="form-group"><div className="field-label">Name</div><input className="field-input" placeholder="Display name" value={name} onChange={e=>setName(e.target.value)}/></div>
       <div className="form-group"><div className="field-label">Role</div>
         <div className="role-row">
