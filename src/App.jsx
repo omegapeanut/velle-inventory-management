@@ -75,12 +75,19 @@ const STYLES = `
     --font: 'Inter', sans-serif;
     --serif: 'Cormorant Garamond', Georgia, serif;
   }
+  html, body { overflow-x: hidden; }
   body { background: var(--bg); color: var(--text); font-family: var(--font); min-height: 100vh; }
 
   .layout { display: flex; min-height: 100vh; }
   .sidenav { width: var(--nav-w); background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 20; }
-  .main { margin-left: var(--nav-w); flex: 1; min-height: 100vh; }
+  .main { margin-left: var(--nav-w); flex: 1; min-width: 0; min-height: 100vh; }
   .nav-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 19; }
+
+  /* CONTENT */
+  /* Capped width so charts/rows don't stretch into absurd proportions on wide monitors —
+     no effect on phone/tablet since they're already narrower than the cap. */
+  .content { padding: 20px; display: flex; flex-direction: column; gap: 16px; max-width: 1120px; margin: 0 auto; width: 100%; box-sizing: border-box; }
+
   @media (max-width: 700px) {
     .sidenav { transform: translateX(-100%); transition: transform 0.25s; box-shadow: 2px 0 18px rgba(0,0,0,0.14); }
     .sidenav.open { transform: translateX(0); }
@@ -127,11 +134,6 @@ const STYLES = `
   .hamburger { display: none; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--muted); }
   .topbar-title { font-family: var(--serif); font-size: 21px; font-weight: 700; letter-spacing: 0.01em; }
   .topbar-date { font-size: 12px; color: var(--muted); margin-left: auto; }
-
-  /* CONTENT */
-  /* Capped width so charts/rows don't stretch into absurd proportions on wide monitors —
-     no effect on phone/tablet since they're already narrower than the cap. */
-  .content { padding: 20px; display: flex; flex-direction: column; gap: 16px; max-width: 1120px; margin: 0 auto; width: 100%; box-sizing: border-box; }
 
   /* CARDS */
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); }
@@ -229,7 +231,7 @@ const STYLES = `
   .modal-actions { display: flex; gap: 8px; margin-top: 4px; }
 
   /* SECTION HEADER */
-  .section-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+  .section-hdr { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 2px; }
   .section-title { font-size: 14px; font-weight: 700; }
 
   /* USER ROW */
@@ -1437,7 +1439,7 @@ function DailyPage({ logs, me, isAdmin, onAdd, onDelete }) {
   return (
     <div className="content">
       <div className="card">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
           <div className="card-title" style={{ marginBottom: 0 }}>{isAdmin ? "All Orders" : "My Orders"} · Filter by Date</div>
           <button className="btn btn-ghost btn-xs" onClick={() => setFilterDate("")}>Show All</button>
         </div>
