@@ -129,12 +129,23 @@ const STYLES = `
   .topbar-date { font-size: 12px; color: var(--muted); margin-left: auto; }
 
   /* CONTENT */
-  .content { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  /* Capped width so charts/rows don't stretch into absurd proportions on wide monitors —
+     no effect on phone/tablet since they're already narrower than the cap. */
+  .content { padding: 20px; display: flex; flex-direction: column; gap: 16px; max-width: 1120px; margin: 0 auto; width: 100%; box-sizing: border-box; }
 
   /* CARDS */
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); }
   .card-title { font-family: var(--serif); font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 14px; }
   .card-sub { font-size: 11px; color: var(--muted); font-weight: 500; margin-top: 2px; }
+
+  /* Side-by-side card pairing: cards grow to share a row when there's room, and wrap to
+     full width automatically (no media query needed) when the viewport or content is
+     too narrow — used to stop tall pages turning into one long single-column scroll. */
+  .card-flow { display: flex; flex-wrap: wrap; gap: 16px; }
+  .card-flow > * { flex: 1 1 380px; min-width: 0; }
+
+  /* PAGE TABS (e.g. Finance) */
+  .page-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 2px; }
 
   /* KPI ROW */
   .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
@@ -1042,27 +1053,30 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
         </div>
       )}
 
-      <NoticeBoard notices={notices} users={users} me={me} isAdmin={isAdmin} onAck={onAck} onPost={onPostNotice} />
+      <div className="card-flow">
+        <NoticeBoard notices={notices} users={users} me={me} isAdmin={isAdmin} onAck={onAck} onPost={onPostNotice} />
 
-      {!isAdmin && myTarget && (
-        <div className="card">
-          <div className="card-title">🎯 My Targets</div>
-          <div className="target-row">
-            <div className="target-lbl">New dealers this week</div>
-            <div className="target-val">{newDealersThisWeek} / {myTarget.newDealerWeekly}</div>
+        {!isAdmin && myTarget && (
+          <div className="card">
+            <div className="card-title">🎯 My Targets</div>
+            <div className="target-row">
+              <div className="target-lbl">New dealers this week</div>
+              <div className="target-val">{newDealersThisWeek} / {myTarget.newDealerWeekly}</div>
+            </div>
+            <div className="target-bar"><div className="target-fill" style={{ width: `${Math.min(100, myTarget.newDealerWeekly ? (newDealersThisWeek / myTarget.newDealerWeekly) * 100 : 0)}%` }} /></div>
+            <div className="target-row" style={{ marginTop: 12 }}>
+              <div className="target-lbl">Sales this month</div>
+              <div className="target-val">{sgd(salesThisMonth)} / {sgd(myTarget.salesMonthly)}</div>
+            </div>
+            <div className="target-bar"><div className="target-fill" style={{ width: `${Math.min(100, myTarget.salesMonthly ? (salesThisMonth / myTarget.salesMonthly) * 100 : 0)}%` }} /></div>
           </div>
-          <div className="target-bar"><div className="target-fill" style={{ width: `${Math.min(100, myTarget.newDealerWeekly ? (newDealersThisWeek / myTarget.newDealerWeekly) * 100 : 0)}%` }} /></div>
-          <div className="target-row" style={{ marginTop: 12 }}>
-            <div className="target-lbl">Sales this month</div>
-            <div className="target-val">{sgd(salesThisMonth)} / {sgd(myTarget.salesMonthly)}</div>
-          </div>
-          <div className="target-bar"><div className="target-fill" style={{ width: `${Math.min(100, myTarget.salesMonthly ? (salesThisMonth / myTarget.salesMonthly) * 100 : 0)}%` }} /></div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {!isAdmin && <MyDealersCard dealers={dealers} logs={scoped} me={me} />}
-
-      <SalesCalendar logs={scoped} isAdmin={isAdmin} />
+      <div className="card-flow">
+        <SalesCalendar logs={scoped} isAdmin={isAdmin} />
+        {!isAdmin && <MyDealersCard dealers={dealers} logs={scoped} me={me} />}
+      </div>
 
       {/* Period sales summary */}
       <div className="card">
@@ -2349,6 +2363,7 @@ function ClaimsReviewPage({ claims, setClaims }) {
 
 // ── FINANCE (admin) ────────────────────────────────────────────────────────────
 function FinancePage({ logs, claims, invoices, supplierPayments, onGenerateInvoice, onMarkPaid, onMarkSent, onAddSupplierPayment }) {
+  const [tab, setTab] = useState("overview");
   // Billing preview defaults to last month (the most recently closed month).
   const [previewMonth, setPreviewMonth] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); });
   const previewBilling = computeMonthlyBilling(logs, previewMonth);
@@ -2395,164 +2410,194 @@ function FinancePage({ logs, claims, invoices, supplierPayments, onGenerateInvoi
     return { month: new Date(m + "-01").toLocaleDateString("en-SG", { month: "short" }), Income: income, Expense: supplierExp + claimExp };
   });
 
+  const invoiceCount = invoices.length, supplierCount = supplierPayments.length;
+
   return (
     <div className="content">
       {unsentInvoices.length > 0 && (
-        <div className="alert-card">
+        <div className="alert-card" onClick={() => setTab("invoices")}>
           <div className="alert-ic">📮</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="alert-title">{unsentInvoices.length} invoice{unsentInvoices.length > 1 ? "s" : ""} ready to send</div>
             <div className="alert-sub">{unsentInvoices.map(i => `${i.dealer} (${sgd(i.total)})`).join("  ·  ")}</div>
           </div>
+          <div className="alert-cta">Review →</div>
         </div>
       )}
 
-      <div className="kpi-grid">
-        <div className="kpi-card"><div className="kpi-val" style={{ color: "#10B981", fontSize: 19 }}>{sgd(totalIncome)}</div><div className="kpi-lbl">Income Received</div></div>
-        <div className="kpi-card"><div className="kpi-val" style={{ color: "#B5715A", fontSize: 19 }}>{sgd(totalSupplierPayments)}</div><div className="kpi-lbl">Paid to Suppliers</div></div>
-        <div className="kpi-card"><div className="kpi-val" style={{ color: "#9A7B4E", fontSize: 19 }}>{sgd(collectableThisMonth)}</div><div className="kpi-lbl">Collectable This Month</div></div>
-        <div className="kpi-card"><div className="kpi-val" style={{ color: "#F59E0B", fontSize: 19 }}>{sgd(collectableNextMonth)}</div><div className="kpi-lbl">Collectable Next Month</div></div>
-        <div className="kpi-card"><div className="kpi-val" style={{ color: "#EF4444", fontSize: 19 }}>{sgd(outstanding)}</div><div className="kpi-lbl">Total Outstanding</div></div>
+      <div className="page-tabs">
+        <button className={`btn btn-sm ${tab === "overview" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("overview")}>Overview</button>
+        <button className={`btn btn-sm ${tab === "billing" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("billing")}>Monthly Billing</button>
+        <button className={`btn btn-sm ${tab === "invoices" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("invoices")}>Tax Invoices ({invoiceCount})</button>
+        <button className={`btn btn-sm ${tab === "suppliers" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("suppliers")}>Suppliers ({supplierCount})</button>
       </div>
 
-      <div className="card">
-        <div className="card-title">Income vs Expense — Last 6 Months</div>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={incomeExpenseData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
-            <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#8A8073" }} />
-            <YAxis tick={{ fontSize: 11, fill: "#8A8073" }} />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar dataKey="Income" fill="#10B981" radius={[4, 4, 0, 0]} />
-            <Bar dataKey="Expense" fill="#B5715A" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+      {tab === "overview" && (
+        <>
+          <div className="kpi-grid">
+            <div className="kpi-card"><div className="kpi-val" style={{ color: "#10B981", fontSize: 19 }}>{sgd(totalIncome)}</div><div className="kpi-lbl">Income Received</div></div>
+            <div className="kpi-card"><div className="kpi-val" style={{ color: "#B5715A", fontSize: 19 }}>{sgd(totalSupplierPayments)}</div><div className="kpi-lbl">Paid to Suppliers</div></div>
+            <div className="kpi-card"><div className="kpi-val" style={{ color: "#9A7B4E", fontSize: 19 }}>{sgd(collectableThisMonth)}</div><div className="kpi-lbl">Collectable This Month</div></div>
+            <div className="kpi-card"><div className="kpi-val" style={{ color: "#F59E0B", fontSize: 19 }}>{sgd(collectableNextMonth)}</div><div className="kpi-lbl">Collectable Next Month</div></div>
+            <div className="kpi-card"><div className="kpi-val" style={{ color: "#EF4444", fontSize: 19 }}>{sgd(outstanding)}</div><div className="kpi-lbl">Total Outstanding</div></div>
+          </div>
 
-      <div className="card">
-        <div className="card-title">Outstanding Invoice Aging</div>
-        <div className="card-sub">Unpaid invoice value by how overdue</div>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={agingData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
-            <XAxis dataKey="bucket" tick={{ fontSize: 9.5, fill: "#8A8073" }} />
-            <YAxis tick={{ fontSize: 10, fill: "#8A8073" }} />
-            <Tooltip content={<CustomTooltip />} />
-            <Bar dataKey="amount" fill="#EF4444" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {topOutstanding.length > 0 && (
-        <div className="card">
-          <div className="card-title">Top Outstanding Dealers</div>
-          <ResponsiveContainer width="100%" height={Math.max(120, topOutstanding.length * 36)}>
-            <BarChart data={topOutstanding} layout="vertical" margin={{ top: 4, right: 20, left: 20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" horizontal={false} />
-              <XAxis type="number" tick={{ fontSize: 11, fill: "#8A8073" }} />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#221E1A", fontWeight: 600 }} width={110} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="amt" fill="#9A7B4E" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {worstLate.length > 0 && (
-        <div className="card" style={{ borderColor: "#F6CDCD" }}>
-          <div className="card-title" style={{ color: "#B91C1C" }}>Longest Overdue</div>
-          {worstLate.map(i => (
-            <div key={i.id} className="list-item" style={{ marginTop: 8 }}>
-              <div className="item-meta"><div style={{ fontWeight: 700 }}>{i.dealer}</div><span className="badge badge-rejected">{i.overdue}d overdue</span></div>
-              <div className="item-time">{i.refNo} · Due {i.dueDate} · {sgd(i.total)}</div>
+          <div className="card-flow">
+            <div className="card">
+              <div className="card-title">Income vs Expense — Last 6 Months</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={incomeExpenseData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#8A8073" }} />
+                  <YAxis tick={{ fontSize: 11, fill: "#8A8073" }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="Income" fill="#10B981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Expense" fill="#B5715A" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
-          ))}
-        </div>
+
+            <div className="card">
+              <div className="card-title">Outstanding Invoice Aging</div>
+              <div className="card-sub">Unpaid invoice value by how overdue</div>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={agingData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
+                  <XAxis dataKey="bucket" tick={{ fontSize: 9.5, fill: "#8A8073" }} />
+                  <YAxis tick={{ fontSize: 10, fill: "#8A8073" }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Bar dataKey="amount" fill="#EF4444" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {(topOutstanding.length > 0 || worstLate.length > 0) && (
+            <div className="card-flow">
+              {topOutstanding.length > 0 && (
+                <div className="card">
+                  <div className="card-title">Top Outstanding Dealers</div>
+                  <ResponsiveContainer width="100%" height={Math.max(140, topOutstanding.length * 36)}>
+                    <BarChart data={topOutstanding} layout="vertical" margin={{ top: 4, right: 20, left: 20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" horizontal={false} />
+                      <XAxis type="number" tick={{ fontSize: 11, fill: "#8A8073" }} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#221E1A", fontWeight: 600 }} width={110} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Bar dataKey="amt" fill="#9A7B4E" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {worstLate.length > 0 && (
+                <div className="card" style={{ borderColor: "#F6CDCD" }}>
+                  <div className="card-title" style={{ color: "#B91C1C" }}>Longest Overdue</div>
+                  {worstLate.map(i => (
+                    <div key={i.id} className="list-item" style={{ marginTop: 8 }}>
+                      <div className="item-meta"><div style={{ fontWeight: 700 }}>{i.dealer}</div><span className="badge badge-rejected">{i.overdue}d overdue</span></div>
+                      <div className="item-time">{i.refNo} · Due {i.dueDate} · {sgd(i.total)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
 
-      <div className="card">
-        <div className="section-hdr" style={{ marginBottom: 4 }}>
-          <div className="card-title" style={{ marginBottom: 0 }}>Monthly Billing — {previewMonthLabel}</div>
-          <input className="field-input" type="month" style={{ width: 150 }} value={previewMonth} onChange={e => setPreviewMonth(e.target.value)} />
-        </div>
-        <div className="card-sub" style={{ marginBottom: 12 }}>Every dealer with sales this month and the total they owe. Closed months are auto-generated already — use Generate for anything still missing.</div>
-        {previewBilling.length === 0 ? (
-          <div className="empty" style={{ padding: "20px 0" }}><div className="empty-lbl">No dealer sales recorded for this month.</div></div>
-        ) : (
-          <>
-            {previewBilling.map(b => {
-              const existing = invoices.find(i => i.dealer === b.dealer && i.monthISO === previewMonth);
-              return (
-                <div className="user-row" key={b.dealer} style={{ marginBottom: 8 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{b.dealer}</div>
-                    <div style={{ fontSize: 11, color: "#8A8073" }}>
-                      {b.lines.length} line item{b.lines.length !== 1 ? "s" : ""}
-                      {existing ? ` · ${existing.status}${existing.sent ? " · sent" : " · not sent"}` : " · not yet generated"}
+      {tab === "billing" && (
+        <div className="card">
+          <div className="section-hdr" style={{ marginBottom: 4 }}>
+            <div className="card-title" style={{ marginBottom: 0 }}>Monthly Billing — {previewMonthLabel}</div>
+            <input className="field-input" type="month" style={{ width: 150 }} value={previewMonth} onChange={e => setPreviewMonth(e.target.value)} />
+          </div>
+          <div className="card-sub" style={{ marginBottom: 12 }}>Every dealer with sales this month and the total they owe. Closed months are auto-generated already — use Generate for anything still missing.</div>
+          {previewBilling.length === 0 ? (
+            <div className="empty" style={{ padding: "20px 0" }}><div className="empty-lbl">No dealer sales recorded for this month.</div></div>
+          ) : (
+            <>
+              {previewBilling.map(b => {
+                const existing = invoices.find(i => i.dealer === b.dealer && i.monthISO === previewMonth);
+                return (
+                  <div className="user-row" key={b.dealer} style={{ marginBottom: 8 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{b.dealer}</div>
+                      <div style={{ fontSize: 11, color: "#8A8073" }}>
+                        {b.lines.length} line item{b.lines.length !== 1 ? "s" : ""}
+                        {existing ? ` · ${existing.status}${existing.sent ? " · sent" : " · not sent"}` : " · not yet generated"}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ fontWeight: 800, color: "#9A7B4E" }}>{sgd(b.total)}</div>
+                      {existing ? (
+                        <>
+                          <button className="btn btn-ghost btn-xs" onClick={() => downloadInvoice(existing)}>⬇</button>
+                          <button className="btn btn-ghost btn-xs" onClick={() => printInvoice(existing)}>🖨</button>
+                        </>
+                      ) : (
+                        <button className="btn btn-primary btn-xs" onClick={() => onGenerateInvoice(b.dealer, previewMonth)}>Generate</button>
+                      )}
                     </div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ fontWeight: 800, color: "#9A7B4E" }}>{sgd(b.total)}</div>
-                    {existing ? (
-                      <>
-                        <button className="btn btn-ghost btn-xs" onClick={() => downloadInvoice(existing)}>⬇</button>
-                        <button className="btn btn-ghost btn-xs" onClick={() => printInvoice(existing)}>🖨</button>
-                      </>
-                    ) : (
-                      <button className="btn btn-primary btn-xs" onClick={() => onGenerateInvoice(b.dealer, previewMonth)}>Generate</button>
-                    )}
+                );
+              })}
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700, marginTop: 4, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+                <span>Total for {previewMonthLabel}</span><span>{sgd(previewTotal)}</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === "invoices" && (
+        <>
+          <div className="section-hdr"><div className="section-title">All Tax Invoices ({invoices.length})</div></div>
+          {invoices.length === 0 ? <div className="empty"><div className="empty-icon">🧾</div><div className="empty-lbl">No invoices generated yet.</div></div>
+            : invoices.map(i => (
+              <div className="list-item" key={i.id}>
+                <div className="item-meta">
+                  <div style={{ fontWeight: 700 }}>{i.dealer}</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <span className={`badge ${i.status === "paid" ? "badge-reviewed" : "badge-pending"}`}>{i.status}</span>
+                    <span className={`badge ${i.sent ? "badge-reviewed" : "badge-rejected"}`}>{i.sent ? "sent" : "not sent"}</span>
                   </div>
                 </div>
-              );
-            })}
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700, marginTop: 4, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
-              <span>Total for {previewMonthLabel}</span><span>{sgd(previewTotal)}</span>
-            </div>
-          </>
-        )}
-      </div>
-
-      <div className="section-hdr"><div className="section-title">All Tax Invoices ({invoices.length})</div></div>
-      {invoices.length === 0 ? <div className="empty"><div className="empty-icon">🧾</div><div className="empty-lbl">No invoices generated yet.</div></div>
-        : invoices.map(i => (
-          <div className="list-item" key={i.id}>
-            <div className="item-meta">
-              <div style={{ fontWeight: 700 }}>{i.dealer}</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <span className={`badge ${i.status === "paid" ? "badge-reviewed" : "badge-pending"}`}>{i.status}</span>
-                <span className={`badge ${i.sent ? "badge-reviewed" : "badge-rejected"}`}>{i.sent ? "sent" : "not sent"}</span>
+                <div className="item-time">{i.refNo} · {i.monthLabel} · Due {i.dueDate}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#9A7B4E" }}>{sgd(i.total)}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button className="btn btn-ghost btn-xs" onClick={() => downloadInvoice(i)}>⬇ PDF</button>
+                  <button className="btn btn-ghost btn-xs" onClick={() => printInvoice(i)}>🖨 Print</button>
+                  {!i.sent && <button className="btn btn-primary btn-xs" onClick={() => onMarkSent(i.id)}>Mark as Sent</button>}
+                  {i.status !== "paid" && <button className="btn btn-green btn-xs" onClick={() => onMarkPaid(i.id)}>Mark Paid</button>}
+                </div>
               </div>
-            </div>
-            <div className="item-time">{i.refNo} · {i.monthLabel} · Due {i.dueDate}</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#9A7B4E" }}>{sgd(i.total)}</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button className="btn btn-ghost btn-xs" onClick={() => downloadInvoice(i)}>⬇ PDF</button>
-              <button className="btn btn-ghost btn-xs" onClick={() => printInvoice(i)}>🖨 Print</button>
-              {!i.sent && <button className="btn btn-primary btn-xs" onClick={() => onMarkSent(i.id)}>Mark as Sent</button>}
-              {i.status !== "paid" && <button className="btn btn-green btn-xs" onClick={() => onMarkPaid(i.id)}>Mark Paid</button>}
-            </div>
-          </div>
-        ))}
+            ))}
+        </>
+      )}
 
-      <div className="card">
-        <div className="card-title">Log Supplier Payment</div>
-        <div className="form-group"><div className="field-label">Supplier</div><input className="field-input" placeholder="Supplier name" value={spSupplier} onChange={e => setSpSupplier(e.target.value)} /></div>
-        <div className="input-row-2">
-          <div className="form-group"><div className="field-label">Amount (SGD)</div><input className="field-input" type="number" inputMode="decimal" placeholder="0.00" value={spAmount} onChange={e => setSpAmount(e.target.value)} /></div>
-          <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="What was this for?" value={spNotes} onChange={e => setSpNotes(e.target.value)} /></div>
-        </div>
-        <button className="btn btn-primary" onClick={addSp}>Log Payment</button>
-      </div>
-      <div className="section-hdr"><div className="section-title">Supplier Payments ({supplierPayments.length})</div></div>
-      {supplierPayments.length === 0 ? <div className="empty"><div className="empty-icon">📦</div><div className="empty-lbl">No supplier payments logged yet.</div></div>
-        : supplierPayments.map(p => (
-          <div className="list-item" key={p.id}>
-            <div className="item-meta"><div style={{ fontWeight: 700 }}>{p.supplier}</div><div style={{ fontWeight: 700, color: "#B5715A" }}>{sgd(p.amount)}</div></div>
-            <div className="item-time">{p.date} · by {p.by}</div>
-            {p.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{p.notes}</div>}
+      {tab === "suppliers" && (
+        <>
+          <div className="card">
+            <div className="card-title">Log Supplier Payment</div>
+            <div className="form-group"><div className="field-label">Supplier</div><input className="field-input" placeholder="Supplier name" value={spSupplier} onChange={e => setSpSupplier(e.target.value)} /></div>
+            <div className="input-row-2">
+              <div className="form-group"><div className="field-label">Amount (SGD)</div><input className="field-input" type="number" inputMode="decimal" placeholder="0.00" value={spAmount} onChange={e => setSpAmount(e.target.value)} /></div>
+              <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="What was this for?" value={spNotes} onChange={e => setSpNotes(e.target.value)} /></div>
+            </div>
+            <button className="btn btn-primary" onClick={addSp}>Log Payment</button>
           </div>
-        ))}
+          <div className="section-hdr"><div className="section-title">Supplier Payments ({supplierPayments.length})</div></div>
+          {supplierPayments.length === 0 ? <div className="empty"><div className="empty-icon">📦</div><div className="empty-lbl">No supplier payments logged yet.</div></div>
+            : supplierPayments.map(p => (
+              <div className="list-item" key={p.id}>
+                <div className="item-meta"><div style={{ fontWeight: 700 }}>{p.supplier}</div><div style={{ fontWeight: 700, color: "#B5715A" }}>{sgd(p.amount)}</div></div>
+                <div className="item-time">{p.date} · by {p.by}</div>
+                {p.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{p.notes}</div>}
+              </div>
+            ))}
+        </>
+      )}
     </div>
   );
 }
