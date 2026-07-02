@@ -491,6 +491,35 @@ const GST_RATE = 0.09;
 const daysOverdue = dueISO => Math.floor((Date.now() - new Date(dueISO + "T00:00:00").getTime()) / 86400000);
 const agingBucket = days => days <= 0 ? "Not due" : days <= 30 ? "1–30 days" : days <= 60 ? "31–60 days" : days <= 90 ? "61–90 days" : "90+ days";
 
+// Pure calc: every dealer with net-positive quantity in a given month, with billable
+// lines and totals. Shared by the billing preview, manual generation, and auto-generation.
+function computeMonthlyBilling(logs, monthISO) {
+  const byDealer = {};
+  logs.forEach(l => {
+    if (!l.dealer || !l.dateISO || l.dateISO.slice(0, 7) !== monthISO) return;
+    const qty = (Number(l.sold) || 0) - (Number(l.returned) || 0);
+    if (qty <= 0) return;
+    const price = Number(l.price) || 0;
+    if (!byDealer[l.dealer]) byDealer[l.dealer] = [];
+    byDealer[l.dealer].push({ poNo: l.poNo, doNo: l.doNo, model: l.product, qty, price, amount: qty * price });
+  });
+  return Object.entries(byDealer).map(([dealer, lines]) => {
+    const subtotal = lines.reduce((s, l) => s + l.amount, 0);
+    const gst = subtotal * GST_RATE;
+    return { dealer, lines, subtotal, gst, total: subtotal + gst };
+  });
+}
+function buildInvoice(billing, monthISO, by) {
+  const due = new Date(); due.setDate(due.getDate() + 30);
+  return {
+    id: Date.now() + Math.random(), refNo: `INV-${monthISO.replace("-", "")}-${String(Date.now()).slice(-4)}`,
+    dealer: billing.dealer, monthISO, monthLabel: new Date(monthISO + "-01").toLocaleDateString("en-SG", { month: "long", year: "numeric" }),
+    lines: billing.lines, subtotal: billing.subtotal, gst: billing.gst, gstRate: GST_RATE, total: billing.total,
+    issueDate: todayStr(), issueDateISO: todayISO(), dueDate: fmtDate(due), dueDateISO: due.toISOString().split("T")[0],
+    status: "unpaid", paidDateISO: null, sent: false, sentDateISO: null, by,
+  };
+}
+
 // Installation jobs — admin creates & assigns to an installer company, who accepts
 // and completes them with arrival (geo+time stamped) and completion photos.
 const JOB_STATUS_LABEL = { pending: "Pending Acceptance", accepted: "Accepted", arrived: "Arrived On-Site", completed: "Completed" };
@@ -641,6 +670,35 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trash]);
 
+  // End-of-month billing: once a month has fully closed, auto-generate any missing
+  // dealer tax invoices for it (catches up on every unbilled closed month, not just
+  // last month). The "already exists" check makes this idempotent, so it's safe to
+  // re-check whenever orders/invoices load or change; it posts a notice the first
+  // time it actually creates something, reminding Admin to send the invoices out.
+  useEffect(() => {
+    if (!user || (user.role !== "admin" && user.role !== "superadmin")) return;
+    const curMonth = todayISO().slice(0, 7);
+    const closedMonths = new Set();
+    logs.forEach(l => { if (l.dealer && l.dateISO) { const m = l.dateISO.slice(0, 7); if (m < curMonth) closedMonths.add(m); } });
+    const created = [];
+    closedMonths.forEach(m => {
+      computeMonthlyBilling(logs, m).forEach(b => {
+        if (invoices.some(i => i.dealer === b.dealer && i.monthISO === m)) return;
+        created.push(buildInvoice(b, m, "System"));
+      });
+    });
+    if (created.length > 0) {
+      setInvoices([...created, ...invoices]);
+      setNotices([{
+        id: Date.now(),
+        title: `${created.length} tax invoice${created.length > 1 ? "s" : ""} auto-generated`,
+        message: `${created.length} monthly tax invoice${created.length > 1 ? "s were" : " was"} auto-generated for closed-month dealer sales. Go to Finance → Tax Invoices to review, download or print, and send ${created.length > 1 ? "them" : "it"} out.`,
+        by: "System", date: todayStr(), dateISO: todayISO(), ackBy: [],
+      }, ...notices]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, logs, invoices]);
+
   // Shared running PO/DO series (set in SuperAdmin → Company Settings). Used by both
   // Sales Orders and Installer Jobs so every document draws from one running number.
   const allocateDocNumbers = () => {
@@ -739,28 +797,13 @@ export default function App() {
   const addSupplierPayment = payload => setSupplierPayments([{ id: Date.now(), by: user.name, ...payload }, ...supplierPayments]);
   // Builds a tax invoice for one dealer's net orders in a given month, saves it, and returns it for immediate PDF download.
   const generateInvoice = (dealer, monthISO) => {
-    const monthLogs = logs.filter(l => l.dealer === dealer && l.dateISO && l.dateISO.slice(0, 7) === monthISO);
-    const lines = monthLogs.map(l => {
-      const qty = (Number(l.sold) || 0) - (Number(l.returned) || 0);
-      const price = Number(l.price) || 0;
-      return qty > 0 ? { poNo: l.poNo, doNo: l.doNo, model: l.product, qty, price, amount: qty * price } : null;
-    }).filter(Boolean);
-    const subtotal = lines.reduce((s, l) => s + l.amount, 0);
-    const gst = subtotal * GST_RATE;
-    const total = subtotal + gst;
-    const issueDateISO = todayISO();
-    const due = new Date(); due.setDate(due.getDate() + 30);
-    const monthLabel = new Date(monthISO + "-01").toLocaleDateString("en-SG", { month: "long", year: "numeric" });
-    const invoice = {
-      id: Date.now(), refNo: `INV-${monthISO.replace("-", "")}-${String(Date.now()).slice(-4)}`,
-      dealer, monthISO, monthLabel, lines, subtotal, gst, gstRate: GST_RATE, total,
-      issueDate: todayStr(), issueDateISO, dueDate: fmtDate(due), dueDateISO: due.toISOString().split("T")[0],
-      status: "unpaid", paidDateISO: null, by: user.name,
-    };
+    const billing = computeMonthlyBilling(logs, monthISO).find(b => b.dealer === dealer) || { dealer, lines: [], subtotal: 0, gst: 0, total: 0 };
+    const invoice = buildInvoice(billing, monthISO, user.name);
     setInvoices([invoice, ...invoices]);
     return invoice;
   };
   const markInvoicePaid = id => setInvoices(invoices.map(i => i.id === id ? { ...i, status: "paid", paidDateISO: todayISO() } : i));
+  const markInvoiceSent = id => setInvoices(invoices.map(i => i.id === id ? { ...i, sent: true, sentDateISO: todayISO() } : i));
 
   return (
     <>
@@ -821,7 +864,7 @@ export default function App() {
           {page === "targets" && <TargetsPage targets={targets} setTargets={setTargets} users={users} />}
           {page === "claims" && <ClaimsPage claims={claims} me={user.name} onAdd={() => setModal("claim")} />}
           {page === "claims-review" && <ClaimsReviewPage claims={claims} setClaims={setClaims} />}
-          {page === "finance" && <FinancePage dealers={dealers} claims={claims} invoices={invoices} supplierPayments={supplierPayments} onGenerateInvoice={generateInvoice} onMarkPaid={markInvoicePaid} onAddSupplierPayment={addSupplierPayment} />}
+          {page === "finance" && <FinancePage logs={logs} claims={claims} invoices={invoices} supplierPayments={supplierPayments} onGenerateInvoice={generateInvoice} onMarkPaid={markInvoicePaid} onMarkSent={markInvoiceSent} onAddSupplierPayment={addSupplierPayment} />}
           {page === "balance-sheet" && isSuperAdmin && <BalanceSheetPage invoices={invoices} supplierPayments={supplierPayments} claims={claims} />}
           {page === "company-settings" && isSuperAdmin && <CompanySettingsPage settings={companySettings} setSettings={setCompanySettings} counters={docCounters} setCounters={setDocCounters} />}
           {page === "system" && isSuperAdmin && <SystemPage logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} trash={trash} notices={notices} onLoad={loadTestData} onClear={clearAllData} />}
@@ -2301,11 +2344,13 @@ function ClaimsReviewPage({ claims, setClaims }) {
 }
 
 // ── FINANCE (admin) ────────────────────────────────────────────────────────────
-function FinancePage({ dealers, claims, invoices, supplierPayments, onGenerateInvoice, onMarkPaid, onAddSupplierPayment }) {
-  const [genDealer, setGenDealer] = useState("");
-  const [genMonth, setGenMonth] = useState(() => todayISO().slice(0, 7));
-  const [lastGenerated, setLastGenerated] = useState(null);
-  const generate = () => { if (genDealer && genMonth) setLastGenerated(onGenerateInvoice(genDealer, genMonth)); };
+function FinancePage({ logs, claims, invoices, supplierPayments, onGenerateInvoice, onMarkPaid, onMarkSent, onAddSupplierPayment }) {
+  // Billing preview defaults to last month (the most recently closed month).
+  const [previewMonth, setPreviewMonth] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); });
+  const previewBilling = computeMonthlyBilling(logs, previewMonth);
+  const previewMonthLabel = new Date(previewMonth + "-01").toLocaleDateString("en-SG", { month: "long", year: "numeric" });
+  const previewTotal = previewBilling.reduce((s, b) => s + b.total, 0);
+  const unsentInvoices = invoices.filter(i => !i.sent);
 
   const [spSupplier, setSpSupplier] = useState("");
   const [spAmount, setSpAmount] = useState("");
@@ -2348,6 +2393,16 @@ function FinancePage({ dealers, claims, invoices, supplierPayments, onGenerateIn
 
   return (
     <div className="content">
+      {unsentInvoices.length > 0 && (
+        <div className="alert-card">
+          <div className="alert-ic">📮</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="alert-title">{unsentInvoices.length} invoice{unsentInvoices.length > 1 ? "s" : ""} ready to send</div>
+            <div className="alert-sub">{unsentInvoices.map(i => `${i.dealer} (${sgd(i.total)})`).join("  ·  ")}</div>
+          </div>
+        </div>
+      )}
+
       <div className="kpi-grid">
         <div className="kpi-card"><div className="kpi-val" style={{ color: "#10B981", fontSize: 19 }}>{sgd(totalIncome)}</div><div className="kpi-lbl">Income Received</div></div>
         <div className="kpi-card"><div className="kpi-val" style={{ color: "#B5715A", fontSize: 19 }}>{sgd(totalSupplierPayments)}</div><div className="kpi-lbl">Paid to Suppliers</div></div>
@@ -2413,35 +2468,64 @@ function FinancePage({ dealers, claims, invoices, supplierPayments, onGenerateIn
       )}
 
       <div className="card">
-        <div className="card-title">Generate Monthly Tax Invoice</div>
-        <div className="input-row-2">
-          <div className="form-group"><div className="field-label">Dealer</div>
-            <select className="field-select" value={genDealer} onChange={e => setGenDealer(e.target.value)}>
-              <option value="">Select a dealer…</option>
-              {dealers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-            </select>
-          </div>
-          <div className="form-group"><div className="field-label">Month</div><input className="field-input" type="month" value={genMonth} onChange={e => setGenMonth(e.target.value)} /></div>
+        <div className="section-hdr" style={{ marginBottom: 4 }}>
+          <div className="card-title" style={{ marginBottom: 0 }}>Monthly Billing — {previewMonthLabel}</div>
+          <input className="field-input" type="month" style={{ width: 150 }} value={previewMonth} onChange={e => setPreviewMonth(e.target.value)} />
         </div>
-        <button className="btn btn-primary" onClick={generate}>Generate Tax Invoice</button>
-        {lastGenerated && (
-          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => downloadInvoice(lastGenerated)}>⬇ Download {lastGenerated.refNo}</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => printInvoice(lastGenerated)}>🖨 Print</button>
-          </div>
+        <div className="card-sub" style={{ marginBottom: 12 }}>Every dealer with sales this month and the total they owe. Closed months are auto-generated already — use Generate for anything still missing.</div>
+        {previewBilling.length === 0 ? (
+          <div className="empty" style={{ padding: "20px 0" }}><div className="empty-lbl">No dealer sales recorded for this month.</div></div>
+        ) : (
+          <>
+            {previewBilling.map(b => {
+              const existing = invoices.find(i => i.dealer === b.dealer && i.monthISO === previewMonth);
+              return (
+                <div className="user-row" key={b.dealer} style={{ marginBottom: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{b.dealer}</div>
+                    <div style={{ fontSize: 11, color: "#8A8073" }}>
+                      {b.lines.length} line item{b.lines.length !== 1 ? "s" : ""}
+                      {existing ? ` · ${existing.status}${existing.sent ? " · sent" : " · not sent"}` : " · not yet generated"}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ fontWeight: 800, color: "#9A7B4E" }}>{sgd(b.total)}</div>
+                    {existing ? (
+                      <>
+                        <button className="btn btn-ghost btn-xs" onClick={() => downloadInvoice(existing)}>⬇</button>
+                        <button className="btn btn-ghost btn-xs" onClick={() => printInvoice(existing)}>🖨</button>
+                      </>
+                    ) : (
+                      <button className="btn btn-primary btn-xs" onClick={() => onGenerateInvoice(b.dealer, previewMonth)}>Generate</button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700, marginTop: 4, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+              <span>Total for {previewMonthLabel}</span><span>{sgd(previewTotal)}</span>
+            </div>
+          </>
         )}
       </div>
 
-      <div className="section-hdr"><div className="section-title">Tax Invoices ({invoices.length})</div></div>
+      <div className="section-hdr"><div className="section-title">All Tax Invoices ({invoices.length})</div></div>
       {invoices.length === 0 ? <div className="empty"><div className="empty-icon">🧾</div><div className="empty-lbl">No invoices generated yet.</div></div>
         : invoices.map(i => (
           <div className="list-item" key={i.id}>
-            <div className="item-meta"><div style={{ fontWeight: 700 }}>{i.dealer}</div><span className={`badge ${i.status === "paid" ? "badge-reviewed" : "badge-pending"}`}>{i.status}</span></div>
+            <div className="item-meta">
+              <div style={{ fontWeight: 700 }}>{i.dealer}</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <span className={`badge ${i.status === "paid" ? "badge-reviewed" : "badge-pending"}`}>{i.status}</span>
+                <span className={`badge ${i.sent ? "badge-reviewed" : "badge-rejected"}`}>{i.sent ? "sent" : "not sent"}</span>
+              </div>
+            </div>
             <div className="item-time">{i.refNo} · {i.monthLabel} · Due {i.dueDate}</div>
             <div style={{ fontSize: 15, fontWeight: 700, color: "#9A7B4E" }}>{sgd(i.total)}</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button className="btn btn-ghost btn-xs" onClick={() => downloadInvoice(i)}>⬇ PDF</button>
               <button className="btn btn-ghost btn-xs" onClick={() => printInvoice(i)}>🖨 Print</button>
+              {!i.sent && <button className="btn btn-primary btn-xs" onClick={() => onMarkSent(i.id)}>Mark as Sent</button>}
               {i.status !== "paid" && <button className="btn btn-green btn-xs" onClick={() => onMarkPaid(i.id)}>Mark Paid</button>}
             </div>
           </div>
