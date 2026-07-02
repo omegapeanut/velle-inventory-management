@@ -404,10 +404,10 @@ const DEFAULT_DOC_COUNTERS = { poPrefix: "PO-", doPrefix: "DO-", poNext: 123031,
 
 // Starter dealer & product lists — edit these on the Dealers / Products pages.
 const initDealers = [
-  { id: 1, name: "One9supplies Pte Ltd", contactName: "Jason Lim", contactPhone: "9123 4567", address: "21 Woodlands Close, #03-15, Singapore 737854", salesperson: "Ali", createdAt: "2026-06-01T09:00:00.000Z" },
-  { id: 2, name: "ABC Construction", contactName: "Priya Nair", contactPhone: "8234 5678", address: "5 Toa Payoh Industrial Park, #02-08, Singapore 319058", salesperson: "Ali", createdAt: "2026-06-03T09:00:00.000Z" },
-  { id: 3, name: "BuildRight Pte Ltd", contactName: "Wong Kah Meng", contactPhone: "9345 6789", address: "88 Kaki Bukit Road 4, #04-22, Singapore 417839", salesperson: "Raju", createdAt: "2026-06-10T09:00:00.000Z" },
-  { id: 4, name: "Summit Renovation", contactName: "Farah Aziz", contactPhone: "8456 7890", address: "12 Ubi Crescent, #01-05, Singapore 408563", salesperson: "Wei", createdAt: "2026-06-20T09:00:00.000Z" },
+  { id: 1, name: "One9supplies Pte Ltd", contactName: "Jason Lim", contactPhone: "9123 4567", contactEmail: "jason@one9supplies.sg", address: "21 Woodlands Close, #03-15, Singapore 737854", salesperson: "Ali", createdAt: "2026-06-01T09:00:00.000Z" },
+  { id: 2, name: "ABC Construction", contactName: "Priya Nair", contactPhone: "8234 5678", contactEmail: "priya@abcconstruction.sg", address: "5 Toa Payoh Industrial Park, #02-08, Singapore 319058", salesperson: "Ali", createdAt: "2026-06-03T09:00:00.000Z" },
+  { id: 3, name: "BuildRight Pte Ltd", contactName: "Wong Kah Meng", contactPhone: "9345 6789", contactEmail: "kahmeng@buildright.sg", address: "88 Kaki Bukit Road 4, #04-22, Singapore 417839", salesperson: "Raju", createdAt: "2026-06-10T09:00:00.000Z" },
+  { id: 4, name: "Summit Renovation", contactName: "Farah Aziz", contactPhone: "8456 7890", contactEmail: "farah@summitreno.sg", address: "12 Ubi Crescent, #01-05, Singapore 408563", salesperson: "Wei", createdAt: "2026-06-20T09:00:00.000Z" },
 ];
 const initProducts = [
   { id: 1, name: "150mm S-Trap Model One Toilet Bowl", price: 198, stock: 40, threshold: 10 },
@@ -509,11 +509,13 @@ function computeMonthlyBilling(logs, monthISO) {
     return { dealer, lines, subtotal, gst, total: subtotal + gst };
   });
 }
-function buildInvoice(billing, monthISO, by) {
+function buildInvoice(billing, monthISO, by, dealers = []) {
   const due = new Date(); due.setDate(due.getDate() + 30);
+  const dealerRec = dealers.find(d => d.name === billing.dealer);
   return {
     id: Date.now() + Math.random(), refNo: `INV-${monthISO.replace("-", "")}-${String(Date.now()).slice(-4)}`,
-    dealer: billing.dealer, monthISO, monthLabel: new Date(monthISO + "-01").toLocaleDateString("en-SG", { month: "long", year: "numeric" }),
+    dealer: billing.dealer, dealerPhone: dealerRec?.contactPhone || "", dealerEmail: dealerRec?.contactEmail || "",
+    monthISO, monthLabel: new Date(monthISO + "-01").toLocaleDateString("en-SG", { month: "long", year: "numeric" }),
     lines: billing.lines, subtotal: billing.subtotal, gst: billing.gst, gstRate: GST_RATE, total: billing.total,
     issueDate: todayStr(), issueDateISO: todayISO(), dueDate: fmtDate(due), dueDateISO: due.toISOString().split("T")[0],
     status: "unpaid", paidDateISO: null, sent: false, sentDateISO: null, by,
@@ -684,7 +686,7 @@ export default function App() {
     closedMonths.forEach(m => {
       computeMonthlyBilling(logs, m).forEach(b => {
         if (invoices.some(i => i.dealer === b.dealer && i.monthISO === m)) return;
-        created.push(buildInvoice(b, m, "System"));
+        created.push(buildInvoice(b, m, "System", dealers));
       });
     });
     if (created.length > 0) {
@@ -798,7 +800,7 @@ export default function App() {
   // Builds a tax invoice for one dealer's net orders in a given month, saves it, and returns it for immediate PDF download.
   const generateInvoice = (dealer, monthISO) => {
     const billing = computeMonthlyBilling(logs, monthISO).find(b => b.dealer === dealer) || { dealer, lines: [], subtotal: 0, gst: 0, total: 0 };
-    const invoice = buildInvoice(billing, monthISO, user.name);
+    const invoice = buildInvoice(billing, monthISO, user.name, dealers);
     setInvoices([invoice, ...invoices]);
     return invoice;
   };
@@ -1277,7 +1279,7 @@ function MyDealersCard({ dealers, logs, me }) {
             <div className="dealer-hdr">
               <div>
                 <div style={{ fontSize: 14, fontWeight: 700 }}>{d.name}</div>
-                {d.contactName && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.contactName}{d.contactPhone ? ` · ${d.contactPhone}` : ""}</div>}
+                {d.contactName && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.contactName}{d.contactPhone ? ` · ${d.contactPhone}` : ""}{d.contactEmail ? ` · ${d.contactEmail}` : ""}</div>}
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 15, fontWeight: 800, color: "#9A7B4E" }}>{sgd(value)}</div>
@@ -1848,7 +1850,7 @@ function DealersPage({ dealers, setDealers, onAdd, onEdit, onTrash }) {
                 <div className="cat-ic">🤝</div>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{d.name}</div>
-                  {d.contactName && <div style={{ fontSize: 11, color: "#8A8073" }}>{d.contactName}{d.contactPhone ? ` · ${d.contactPhone}` : ""}</div>}
+                  {d.contactName && <div style={{ fontSize: 11, color: "#8A8073" }}>{d.contactName}{d.contactPhone ? ` · ${d.contactPhone}` : ""}{d.contactEmail ? ` · ${d.contactEmail}` : ""}</div>}
                 </div>
               </div>
               <span className="entry-tag">👤 {d.salesperson || "Unassigned"}</span>
@@ -1868,13 +1870,14 @@ function DealerModal({ edit, dealers, setDealers, users, isAdmin, me, onClose })
   const [name, setName] = useState(edit?.name || "");
   const [contactName, setContactName] = useState(edit?.contactName || "");
   const [contactPhone, setContactPhone] = useState(edit?.contactPhone || "");
+  const [contactEmail, setContactEmail] = useState(edit?.contactEmail || "");
   const [address, setAddress] = useState(edit?.address || "");
   const [salesperson, setSalesperson] = useState(edit?.salesperson || (isAdmin ? "" : me));
   const salespeople = users.filter(u => u.role === "salesperson");
   const save = () => {
     const v = name.trim();
     if (!v) return;
-    const extra = { name: v, contactName, contactPhone, address, salesperson };
+    const extra = { name: v, contactName, contactPhone, contactEmail, address, salesperson };
     if (edit) setDealers(dealers.map(x => x.id === edit.id ? { ...x, ...extra } : x));
     else if (!dealers.some(x => x.name.toLowerCase() === v.toLowerCase())) setDealers([...dealers, { id: Date.now(), createdAt: new Date().toISOString(), ...extra }]);
     onClose();
@@ -1887,6 +1890,7 @@ function DealerModal({ edit, dealers, setDealers, users, isAdmin, me, onClose })
         <div className="form-group"><div className="field-label">Contact Person</div><input className="field-input" placeholder="Name" value={contactName} onChange={e => setContactName(e.target.value)} /></div>
         <div className="form-group"><div className="field-label">Contact Number</div><input className="field-input" placeholder="9123 4567" value={contactPhone} onChange={e => setContactPhone(e.target.value)} /></div>
       </div>
+      <div className="form-group"><div className="field-label">Contact Email</div><input className="field-input" type="email" placeholder="contact@dealer.com" value={contactEmail} onChange={e => setContactEmail(e.target.value)} /></div>
       <div className="form-group"><div className="field-label">Showroom Address</div><input className="field-input" placeholder="Full address for the map" value={address} onChange={e => setAddress(e.target.value)} /></div>
       <div className="form-group"><div className="field-label">Assigned Salesperson</div>
         {isAdmin ? (
@@ -2669,9 +2673,11 @@ function LogModal({ user, dealers, products, onSave, onClose }) {
   const save=()=>{
     if(!dealer||!product){ setErr("Please select a dealer and a product."); return; }
     if(!delivered&&!returned&&!exchanged){ setErr("Enter a delivered, returned or exchanged quantity."); return; }
+    const dealerRec = dealers.find(d=>d.name===dealer);
     onSave({
       id: Date.now(),
       dealer, product, price,
+      dealerPhone: dealerRec?.contactPhone || "", dealerEmail: dealerRec?.contactEmail || "",
       sold: Number(delivered)||0, returned: Number(returned)||0, exchanged: Number(exchanged)||0,
       notes, photo, by:user.name, date:todayStr(), dateISO:todayISO(), time:fmtTime(),
     });

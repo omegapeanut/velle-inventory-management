@@ -34,26 +34,32 @@ function header(doc, title, refLabel, refNo, date) {
   // logo
   const lw = 96, lh = lw * 152 / 439;
   try { doc.addImage(COMPANY.logo, "PNG", L, 34, lw, lh); } catch { /* ignore */ }
-  // company block (right aligned)
+  // company block (right aligned) — UEN/GST share one line to keep this block compact
   doc.setTextColor(...INK); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
   doc.text(COMPANY.name, R, 42, { align: "right" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MUTE);
-  const lines = [COMPANY.addr1, COMPANY.addr2, `UEN ${COMPANY.uen}`, `GST Reg. No. ${COMPANY.gst}`];
+  const lines = [COMPANY.addr1, COMPANY.addr2, `UEN ${COMPANY.uen}  ·  GST Reg. No. ${COMPANY.gst}`];
   if (COMPANY.phone) lines.push(`Tel ${COMPANY.phone}`);
   if (COMPANY.email) lines.push(COMPANY.email);
   if (COMPANY.website) lines.push(COMPANY.website);
-  lines.forEach((t, i) => doc.text(t, R, 55 + i * 10, { align: "right" }));
+  lines.forEach((t, i) => doc.text(t, R, 55 + i * 11, { align: "right" }));
+  const infoBottom = 55 + (lines.length - 1) * 11;
   // title
   doc.setTextColor(...INK); doc.setFont("helvetica", "bold"); doc.setFontSize(22);
   doc.text(title, L, 118);
   doc.setDrawColor(...ACCENT); doc.setLineWidth(2); doc.line(L, 126, L + 150, 126);
-  // reference meta box (right)
+  // reference meta box (right) — positioned with a clear gap below the company block,
+  // however tall that block ends up being (varies with which fields are filled in).
+  const refY = Math.max(104, infoBottom + 22);
   doc.setFontSize(8.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...MUTE);
-  doc.text(refLabel, R - 120, 104); doc.text("Date", R - 120, 118);
+  doc.text(refLabel, R - 130, refY);
   doc.setTextColor(...INK); doc.setFont("helvetica", "bold");
-  doc.text(String(refNo || "—"), R, 104, { align: "right" });
-  doc.text(String(date || "—"), R, 118, { align: "right" });
-  return 150;
+  doc.text(String(refNo || "—"), R, refY, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setTextColor(...MUTE);
+  doc.text("Date", R - 130, refY + 14);
+  doc.setTextColor(...INK); doc.setFont("helvetica", "bold");
+  doc.text(String(date || "—"), R, refY + 14, { align: "right" });
+  return Math.max(150, refY + 36);
 }
 
 function parties(doc, y, order) {
@@ -66,7 +72,10 @@ function parties(doc, y, order) {
   doc.text(order.by || "—", R - 150, y + 15);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...MUTE);
   doc.text(`Order date: ${order.date || "—"}`, R - 150, y + 29);
-  return y + 42;
+  let bottom = y + 42;
+  const contact = [order.dealerPhone, order.dealerEmail].filter(Boolean).join("  ·  ");
+  if (contact) { doc.text(contact, L, y + 29); bottom = Math.max(bottom, y + 43); }
+  return bottom;
 }
 
 function itemsTable(doc, y, order, withPrices) {
@@ -91,22 +100,52 @@ function itemsTable(doc, y, order, withPrices) {
   return doc.lastAutoTable.finalY;
 }
 
+// Sub-Total / GST / (divider) / Total, with enough breathing room that the bold total
+// line never sits on top of the rule above it.
+function totalsBlock(doc, y, sub, gst, gstRate, total, label) {
+  const x1 = R - 190, x2 = R;
+  doc.setFontSize(9.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...INK);
+  doc.text("Sub-Total", x1, y); doc.text(money(sub), x2, y, { align: "right" }); y += 17;
+  doc.text(`GST ${Math.round((gstRate || 0) * 100)}%`, x1, y); doc.text(money(gst), x2, y, { align: "right" }); y += 14;
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(x1, y, x2, y); y += 22;
+  doc.setFontSize(12); doc.setFont("helvetica", "bold");
+  doc.text(label, x1, y); doc.text(money(total), x2, y, { align: "right" });
+  return y + 8;
+}
+
 function totals(doc, y, order) {
   const items = lineItems(order);
   const sub = items.reduce((s, it) => s + it.amount, 0);
   const gst = sub * (VELLE.gstRate || 0);
-  const total = sub + gst;
-  const x1 = R - 190, x2 = R;
-  doc.setFontSize(9.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...INK);
-  const row = (lbl, val, bold) => {
-    doc.setFont("helvetica", bold ? "bold" : "normal");
-    doc.text(lbl, x1, y); doc.text(val, x2, y, { align: "right" }); y += 16;
-  };
-  row("Sub-Total", money(sub));
-  row(`GST ${Math.round((VELLE.gstRate || 0) * 100)}%`, money(gst));
-  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(x1, y - 8, x2, y - 8);
-  doc.setFontSize(11); row("Total (SGD)", money(total), true);
-  return y;
+  return totalsBlock(doc, y, sub, gst, VELLE.gstRate, sub + gst, "Total (SGD)");
+}
+
+// Who generated this document — a real name for manual actions, or a plain
+// "Computer Generated" credit for anything the system created on its own.
+function issuedByLabel(by) {
+  if (!by || by === "System") return "Computer Generated";
+  return `Issued by ${by}`;
+}
+
+// Thank-you note (left) + issued-by credit (right), on one row below the totals.
+function closingRow(doc, y, by) {
+  doc.setFont("helvetica", "italic"); doc.setFontSize(9.5); doc.setTextColor(...ACCENT);
+  doc.text("Thank you for your business!", L, y);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MUTE);
+  doc.text(issuedByLabel(by), R, y, { align: "right" });
+  return y + 14;
+}
+
+// "E. & O. E." + a blank bordered box for office/internal reference use.
+function officialUseBox(doc, y) {
+  doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(...MUTE);
+  doc.text("E. & O. E.", L, y);
+  const boxY = y + 6, boxW = 160, boxH = 40;
+  doc.setDrawColor(...MUTE); doc.setLineWidth(0.6);
+  doc.rect(L, boxY, boxW, boxH);
+  doc.setFontSize(7.5);
+  doc.text("Official Use", L + 8, boxY + 13);
+  return boxY + boxH;
 }
 
 function terms(doc, y) {
@@ -133,6 +172,7 @@ function paymentQR(doc, y) {
   doc.text(`PayNow to UEN ${COMPANY.uen}`, L + 78, y + 26);
   doc.text(VELLE.bank, L + 78, y + 37);
   doc.text("Scan the PayNow QR to pay.", L + 78, y + 48);
+  return y + 66;
 }
 
 function signatures(doc, y) {
@@ -155,10 +195,12 @@ export function makePO(order) {
   let y = header(doc, "PURCHASE ORDER", "PO No.", order.poNo || order.refNo, order.date);
   y = parties(doc, y, order);
   y = itemsTable(doc, y + 4, order, true);
-  totals(doc, y + 22, order);
-  paymentQR(doc, 600);
-  terms(doc, 692);
-  signatures(doc, 792);
+  y = totals(doc, y + 24, order);
+  y = closingRow(doc, y + 14, order.by);
+  y = paymentQR(doc, y + 16);
+  y = officialUseBox(doc, y + 18);
+  y = terms(doc, y + 20);
+  signatures(doc, Math.max(y + 24, 760));
   footer(doc);
   return doc;
 }
@@ -170,8 +212,10 @@ export function makeDO(order) {
   y = itemsTable(doc, y + 4, order, false);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...MUTE);
   doc.text("Please check goods on receipt. Sign below to acknowledge delivery in good order.", L, y + 20);
-  terms(doc, 650);
-  signatures(doc, 770);
+  y = closingRow(doc, y + 40, order.by);
+  y = officialUseBox(doc, y + 12);
+  y = terms(doc, y + 20);
+  signatures(doc, Math.max(y + 24, 760));
   footer(doc);
   return doc;
 }
@@ -187,7 +231,10 @@ function invoiceParties(doc, y, invoice) {
   doc.text(invoice.monthLabel || "—", R - 150, y + 15);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...MUTE);
   doc.text(`Due date: ${invoice.dueDate || "—"}`, R - 150, y + 29);
-  return y + 42;
+  let bottom = y + 42;
+  const contact = [invoice.dealerPhone, invoice.dealerEmail].filter(Boolean).join("  ·  ");
+  if (contact) { doc.text(contact, L, y + 29); bottom = Math.max(bottom, y + 43); }
+  return bottom;
 }
 
 function invoiceItemsTable(doc, y, invoice) {
@@ -204,17 +251,7 @@ function invoiceItemsTable(doc, y, invoice) {
 }
 
 function invoiceTotals(doc, y, invoice) {
-  const x1 = R - 190, x2 = R;
-  doc.setFontSize(9.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...INK);
-  const row = (lbl, val, bold) => {
-    doc.setFont("helvetica", bold ? "bold" : "normal");
-    doc.text(lbl, x1, y); doc.text(val, x2, y, { align: "right" }); y += 16;
-  };
-  row("Sub-Total", money(invoice.subtotal));
-  row(`GST ${Math.round((invoice.gstRate ?? 0.09) * 100)}%`, money(invoice.gst));
-  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(x1, y - 8, x2, y - 8);
-  doc.setFontSize(11); row("Total Due (SGD)", money(invoice.total), true);
-  return y;
+  return totalsBlock(doc, y, invoice.subtotal, invoice.gst, invoice.gstRate ?? 0.09, invoice.total, "Total Due (SGD)");
 }
 
 function invoiceTerms(doc, y) {
@@ -236,9 +273,11 @@ export function makeTaxInvoice(invoice) {
   let y = header(doc, "TAX INVOICE", "Invoice No.", invoice.refNo, invoice.issueDate);
   y = invoiceParties(doc, y, invoice);
   y = invoiceItemsTable(doc, y + 4, invoice);
-  invoiceTotals(doc, y + 22, invoice);
-  paymentQR(doc, 630);
-  invoiceTerms(doc, 720);
+  y = invoiceTotals(doc, y + 24, invoice);
+  y = closingRow(doc, y + 14, invoice.by);
+  y = paymentQR(doc, y + 16);
+  y = officialUseBox(doc, y + 18);
+  invoiceTerms(doc, y + 20);
   footer(doc);
   return doc;
 }
