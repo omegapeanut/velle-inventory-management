@@ -198,6 +198,7 @@ const STYLES = `
   .badge-reviewed { background: var(--green-light); color: var(--green); }
   .badge-rejected { background: var(--red-light); color: var(--red); }
   .badge-accepted { background: var(--orange-light); color: var(--orange); }
+  .badge-drawn { background: var(--purple-light); color: var(--purple); }
   .badge-arrived { background: var(--primary-light); color: var(--primary-dark); }
   .badge-completed { background: var(--green-light); color: var(--green); }
 
@@ -428,16 +429,20 @@ const initDealers = [
   { id: 3, name: "BuildRight Pte Ltd", contactName: "Wong Kah Meng", contactPhone: "9345 6789", contactEmail: "kahmeng@buildright.sg", address: "88 Kaki Bukit Road 4, #04-22, Singapore 417839", salesperson: "Raju", createdAt: "2026-06-10T09:00:00.000Z" },
   { id: 4, name: "Summit Renovation", contactName: "Farah Aziz", contactPhone: "8456 7890", contactEmail: "farah@summitreno.sg", address: "12 Ubi Crescent, #01-05, Singapore 408563", salesperson: "Wei", createdAt: "2026-06-20T09:00:00.000Z" },
 ];
+// Stock lives in two warehouses: Main (bulk/reserve, where shipments arrive) and
+// Dispatch (the active fulfillment warehouse — both dealer sales and installer draws
+// pull from here). Admin transfers stock Main → Dispatch as needed.
 const initProducts = [
-  { id: 1, name: "150mm S-Trap Model One Toilet Bowl", price: 198, stock: 40, threshold: 10 },
-  { id: 2, name: "250mm S-Trap Model One Toilet Bowl", price: 198, stock: 30, threshold: 10 },
-  { id: 3, name: "180mm P-Trap Model One Toilet Bowl", price: 198, stock: 24, threshold: 8 },
-  { id: 4, name: "150mm S-Trap Model One (WDI)", price: 160, stock: 20, threshold: 8 },
-  { id: 5, name: "Flexible Pan Collar (FLC)", price: 210, stock: 60, threshold: 15 },
-  { id: 6, name: '1" Offset Pan Collar (IN-1)', price: 0, stock: 100, threshold: 20 },
-  { id: 7, name: "Aqua-Float Wall Hung Toilet Bowl (HWC-001)", price: 380, stock: 6, threshold: 6 },
-  { id: 8, name: "CushRinse PP Bidet Seat Cover (M1FG-BC)", price: 70, stock: 25, threshold: 8 },
+  { id: 1, name: "150mm S-Trap Model One Toilet Bowl", price: 198, stockMain: 30, stockDispatch: 10, threshold: 10 },
+  { id: 2, name: "250mm S-Trap Model One Toilet Bowl", price: 198, stockMain: 22, stockDispatch: 8, threshold: 10 },
+  { id: 3, name: "180mm P-Trap Model One Toilet Bowl", price: 198, stockMain: 18, stockDispatch: 6, threshold: 8 },
+  { id: 4, name: "150mm S-Trap Model One (WDI)", price: 160, stockMain: 15, stockDispatch: 5, threshold: 8 },
+  { id: 5, name: "Flexible Pan Collar (FLC)", price: 210, stockMain: 45, stockDispatch: 15, threshold: 15 },
+  { id: 6, name: '1" Offset Pan Collar (IN-1)', price: 0, stockMain: 80, stockDispatch: 20, threshold: 20 },
+  { id: 7, name: "Aqua-Float Wall Hung Toilet Bowl (HWC-001)", price: 380, stockMain: 4, stockDispatch: 2, threshold: 6 },
+  { id: 8, name: "CushRinse PP Bidet Seat Cover (M1FG-BC)", price: 70, stockMain: 18, stockDispatch: 7, threshold: 8 },
 ];
+const totalStock = p => (Number(p?.stockMain) || 0) + (Number(p?.stockDispatch) || 0);
 
 // Full catalogue paste-in for Products → Bulk Add (prefilled as a convenience — edit or replace as needed).
 const PRESET_BULK_PRODUCTS = [
@@ -543,13 +548,20 @@ function buildInvoice(billing, monthISO, by, dealers = []) {
 
 // Installation jobs — admin creates & assigns to an installer company, who accepts
 // and completes them with arrival (geo+time stamped) and completion photos.
-const JOB_STATUS_LABEL = { pending: "Pending Acceptance", accepted: "Accepted", arrived: "Arrived On-Site", completed: "Completed" };
+// Job lifecycle: pending (awaiting accept) -> accepted -> drawn (picked up from
+// Dispatch) -> arrived (on-site, unit photographed) -> completed (installed + any
+// unused items returned to Dispatch).
+const JOB_STATUS_LABEL = { pending: "Pending Acceptance", accepted: "Accepted", drawn: "Drawn from Dispatch", arrived: "Arrived On-Site", completed: "Completed" };
 const seedInstallJobs = [
   { id: 940001, poNo: "PO-123031", doNo: "DO-123031", product: "150mm S-Trap Model One Toilet Bowl", qty: 2,
     address: "12 Bishan Street 22, #05-10, Singapore 570012", collectPoint: "Velle Warehouse, 55 Lorong L Telok Kurau",
     date: "05 Jul 2026", dateISO: "2026-07-05", timeFrom: "14:00", timeTo: "17:00",
     installer: "BrightFix Installations", status: "pending", createdBy: "Terence", createdAt: "2026-07-01T09:00:00.000Z",
-    arrivalPhoto: null, arrivalMeta: null, completionPhoto: null, completionMeta: null },
+    notesForInstaller: "Ceiling height unconfirmed — the 150mm and 180mm P-Trap models both fit the rough-in, bring both sizes just in case.",
+    drawnItems: [], drawPhoto: null, drawNotes: "", drawnAt: null,
+    arrivalPhoto: null, arrivalMeta: null,
+    installedProduct: null, installedQty: null, installedPhoto: null, installedAt: null,
+    returnedItems: [], returnPhoto: null, returnedAt: null },
 ];
 const fmt12h = hhmm => {
   if (!hhmm) return "—";
@@ -589,7 +601,7 @@ const NAV = [
   { id: "doc-overview", label: "Doc Overview", icon: "🗂️", admin: true },
   { id: "stock", label: "Stock Summary", icon: "📦", admin: true },
   { id: "dealers", label: "Dealers", icon: "🤝", admin: true },
-  { id: "products", label: "Products", icon: "🛁", admin: true },
+  { id: "inventory", label: "Inventory", icon: "🏬", admin: true },
   { id: "install-jobs", label: "Installation Jobs", icon: "🛠️", admin: true },
   { id: "claims-review", label: "Claims Review", icon: "🧾", admin: true },
   { id: "targets", label: "Sales Targets", icon: "🎯", admin: true },
@@ -663,6 +675,7 @@ export default function App() {
   const [editUser, setEditUser] = useState(null);
   const [dealers, setDealers] = usePersistentState("dealers", initDealers);
   const [products, setProducts] = usePersistentState("products", initProducts);
+  const [transfers, setTransfers] = usePersistentState("transfers", []);
   const [editDealer, setEditDealer] = useState(null);
   const [editProduct, setEditProduct] = useState(null);
   const [tasks, setTasks] = usePersistentState("tasks", initTasks);
@@ -680,6 +693,18 @@ export default function App() {
 
   // Keep the PDF generator's company block in sync with SuperAdmin's settings.
   useEffect(() => { setCompanyInfo(companySettings); }, [companySettings]);
+
+  // One-time migration: older products only have a single "stock" field (from before
+  // the Main/Dispatch warehouse split). Treat that legacy value as Main-warehouse
+  // stock and Dispatch as empty. Idempotent — no-ops once every product has stockMain.
+  useEffect(() => {
+    if (!products.length) return;
+    if (!products.some(p => p.stockMain === undefined)) return;
+    setProducts(products.map(p => p.stockMain === undefined
+      ? { ...p, stockMain: Number(p.stock) || 0, stockDispatch: Number(p.stockDispatch) || 0 }
+      : p));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products]);
 
   // Auto-purge trash items older than 90 days. Runs whenever trash changes
   // (including on first load), and is a no-op once nothing is expired.
@@ -729,26 +754,55 @@ export default function App() {
     return { poNo, doNo };
   };
 
-  // Saving a New Order: record it and adjust warehouse stock (delivered out, returned back).
+  // Saving a New Order: record it and adjust Dispatch warehouse stock (both dealer
+  // sales and installer draws fulfil from Dispatch; Main is bulk/reserve storage).
   const handlePurchase = e => {
     const withDocs = { ...e, ...allocateDocNumbers() };
     setLogs([withDocs, ...logs]);
     const delivered = Number(e.sold) || 0;
     const returned = Number(e.returned) || 0;
     if (e.product && (delivered || returned)) {
-      setProducts(ps => ps.map(p => p.name.toLowerCase() === e.product.toLowerCase() ? { ...p, stock: (Number(p.stock) || 0) - delivered + returned } : p));
+      setProducts(ps => ps.map(p => p.name.toLowerCase() === e.product.toLowerCase() ? { ...p, stockDispatch: (Number(p.stockDispatch) || 0) - delivered + returned } : p));
     }
     setLastOrder(withDocs);
     setModal("order-created");
   };
 
+  // ── WAREHOUSE TRANSFER (Main → Dispatch) ──
+  const transferStock = (productId, qty) => {
+    const p = products.find(x => x.id === productId);
+    if (!p) return;
+    const amt = Math.min(Number(qty) || 0, Number(p.stockMain) || 0);
+    if (amt <= 0) return;
+    setProducts(products.map(x => x.id === productId ? { ...x, stockMain: (Number(x.stockMain) || 0) - amt, stockDispatch: (Number(x.stockDispatch) || 0) + amt } : x));
+    setTransfers([{ id: Date.now(), product: p.name, qty: amt, date: todayStr(), dateISO: todayISO(), by: user.name }, ...transfers]);
+  };
+
   // ── INSTALLATION JOBS ──
   const createInstallJob = payload => {
-    const job = { id: Date.now(), ...allocateDocNumbers(), status: "pending", createdBy: user.name, createdAt: new Date().toISOString(), arrivalPhoto: null, arrivalMeta: null, completionPhoto: null, completionMeta: null, ...payload };
+    const job = {
+      id: Date.now(), ...allocateDocNumbers(), status: "pending", createdBy: user.name, createdAt: new Date().toISOString(),
+      drawnItems: [], drawPhoto: null, drawNotes: "", drawnAt: null,
+      arrivalPhoto: null, arrivalMeta: null,
+      installedProduct: null, installedQty: null, installedPhoto: null, installedAt: null,
+      returnedItems: [], returnPhoto: null, returnedAt: null,
+      ...payload,
+    };
     setInstallJobs([job, ...installJobs]);
     setModal(null);
   };
   const acceptInstallJob = jobId => setInstallJobs(installJobs.map(j => j.id === jobId ? { ...j, status: "accepted", acceptedAt: new Date().toISOString() } : j));
+
+  // Draw from Dispatch: installer picks up one or more models (their own call, beyond
+  // just what was suggested); the photo is already uploaded/resolved by handlePhoto in
+  // the form component before this runs. Deducts each item from Dispatch stock.
+  const drawJobItems = (jobId, items, photoUrl, notes) => {
+    setProducts(products.map(p => {
+      const drawn = items.find(it => it.product === p.name);
+      return drawn ? { ...p, stockDispatch: (Number(p.stockDispatch) || 0) - drawn.qty } : p;
+    }));
+    setInstallJobs(installJobs.map(j => j.id === jobId ? { ...j, status: "drawn", drawnItems: items, drawPhoto: photoUrl, drawNotes: notes || "", drawnAt: new Date().toISOString() } : j));
+  };
   // Arrival photo: captures the unit number, timestamp and (if permitted) GPS location.
   const captureArrivalJobPhoto = (jobId, file) => {
     const finish = (photoUrl, coords) => setInstallJobs(jobs => jobs.map(j => j.id === jobId ? {
@@ -762,11 +816,27 @@ export default function App() {
     if (isCloudinaryConfigured) uploadImage(file).then(withPhoto).catch(() => { const r = new FileReader(); r.onload = ev => withPhoto(ev.target.result); r.readAsDataURL(file); });
     else { const r = new FileReader(); r.onload = ev => withPhoto(ev.target.result); r.readAsDataURL(file); }
   };
-  // Completion photo: the installed product, once the job is done.
-  const captureCompletionJobPhoto = (jobId, file) => {
-    const finish = photoUrl => setInstallJobs(jobs => jobs.map(j => j.id === jobId ? { ...j, status: "completed", completionPhoto: photoUrl, completionMeta: { takenAt: new Date().toISOString() } } : j));
-    if (isCloudinaryConfigured) uploadImage(file).then(finish).catch(() => { const r = new FileReader(); r.onload = ev => finish(ev.target.result); r.readAsDataURL(file); });
-    else { const r = new FileReader(); r.onload = ev => finish(ev.target.result); r.readAsDataURL(file); }
+  // Complete the job: confirm which drawn item (and how many) was actually installed,
+  // work out what's left over, and return that to Dispatch stock. The job's product/
+  // qty/price are overwritten to the installed item so its PO/DO reflect only that —
+  // never the extra items that were drawn "just in case" but not used.
+  const completeInstallJob = (jobId, installedProduct, installedQty, installedPhotoUrl, returnedItems, returnPhotoUrl) => {
+    if (returnedItems.length > 0) {
+      setProducts(products.map(p => {
+        const back = returnedItems.find(it => it.product === p.name);
+        return back ? { ...p, stockDispatch: (Number(p.stockDispatch) || 0) + back.qty } : p;
+      }));
+    }
+    setInstallJobs(installJobs.map(j => {
+      if (j.id !== jobId) return j;
+      const installedPrice = products.find(p => p.name === installedProduct)?.price || 0;
+      return {
+        ...j, status: "completed",
+        product: installedProduct, qty: installedQty, price: installedPrice,
+        installedProduct, installedQty, installedPhoto: installedPhotoUrl, installedAt: new Date().toISOString(),
+        returnedItems, returnPhoto: returnPhotoUrl, returnedAt: new Date().toISOString(),
+      };
+    }));
   };
 
   if (!user) return <LoginScreen users={users} onLogin={u => { setUser(u); setPage(u.role === "installer" ? "install-jobs-mine" : "dashboard"); }} />;
@@ -781,12 +851,12 @@ export default function App() {
     setLogs(seedLogs); setDamages(seedDamages); setDocs(seedDocs);
     setDealers(initDealers); setProducts(initProducts); setTasks(initTasks);
     setTrash([]); setNotices(initNotices); setInstallJobs(seedInstallJobs); setTargets(initTargets); setClaims(seedClaims);
-    setSupplierPayments(seedSupplierPayments); setInvoices(seedInvoices);
+    setSupplierPayments(seedSupplierPayments); setInvoices(seedInvoices); setTransfers([]);
   };
   const clearAllData = () => {
     setLogs([]); setDamages([]); setDocs([]); setDealers([]); setProducts([]); setTasks([]);
     setTrash([]); setNotices([]); setInstallJobs([]); setTargets([]); setClaims([]);
-    setSupplierPayments([]); setInvoices([]);
+    setSupplierPayments([]); setInvoices([]); setTransfers([]);
   };
 
   // ── TRASH ──
@@ -868,7 +938,7 @@ export default function App() {
             <div className="topbar-date">{todayStr()}</div>
           </div>
 
-          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("products")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
+          {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("inventory")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
           {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} />}
           {page === "damage" && <DamagePage damages={damages} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} />}
           {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} onDelete={deleteDoc} />}
@@ -877,11 +947,11 @@ export default function App() {
           {page === "doc-overview" && <DocOverviewPage docs={docs} />}
           {page === "stock" && <StockPage logs={logs} />}
           {page === "dealers" && <DealersPage dealers={dealers} setDealers={setDealers} users={users} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} onTrash={trashItem} />}
-          {page === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" kind="product" items={products} setItems={setProducts} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} onBulkAdd={() => setModal("bulk-products")} />}
+          {page === "inventory" && <InventoryPage products={products} setItems={setProducts} transfers={transfers} onTransfer={transferStock} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} onBulkAdd={() => setModal("bulk-products")} />}
           {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} onTrash={trashItem} />}
           {page === "trash" && <TrashPage trash={trash} me={user.name} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onRestore={restoreTrash} onPermanentDelete={permanentDelete} onEmpty={emptyTrash} />}
           {page === "install-jobs" && <InstallJobsPage jobs={installJobs} onAdd={() => setModal("install-job")} />}
-          {page === "install-jobs-mine" && <InstallerJobsPage jobs={installJobs} me={user.name} onAccept={acceptInstallJob} onArrivalPhoto={captureArrivalJobPhoto} onCompletionPhoto={captureCompletionJobPhoto} />}
+          {page === "install-jobs-mine" && <InstallerJobsPage jobs={installJobs} products={products} me={user.name} onAccept={acceptInstallJob} onDraw={drawJobItems} onArrivalPhoto={captureArrivalJobPhoto} onComplete={completeInstallJob} />}
           {page === "targets" && <TargetsPage targets={targets} setTargets={setTargets} users={users} />}
           {page === "claims" && <ClaimsPage claims={claims} me={user.name} onAdd={() => setModal("claim")} />}
           {page === "claims-review" && <ClaimsReviewPage claims={claims} setClaims={setClaims} />}
@@ -989,7 +1059,9 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
   const sold = todayLogs.reduce((s, l) => s + Number(l.sold), 0);
   const returned = todayLogs.reduce((s, l) => s + Number(l.returned), 0);
   const exchanged = todayLogs.reduce((s, l) => s + Number(l.exchanged || 0), 0);
-  const lowStock = (products || []).filter(p => Number(p.stock) <= Number(p.threshold));
+  const lowStock = (products || []).filter(p => totalStock(p) <= Number(p.threshold));
+  const totalMainStock = (products || []).reduce((s, p) => s + (Number(p.stockMain) || 0), 0);
+  const totalDispatchStock = (products || []).reduce((s, p) => s + (Number(p.stockDispatch) || 0), 0);
   const pendingDmg = damages.filter(d => d.status === "pending").length;
 
   // My targets: new dealers approached this week vs. weekly target, sales this month vs. monthly target.
@@ -1055,7 +1127,7 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
           <div className="alert-ic">⚠️</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="alert-title">{lowStock.length} product{lowStock.length > 1 ? "s" : ""} low on stock</div>
-            <div className="alert-sub">{lowStock.map(p => `${p.name} (${p.stock})`).join("  ·  ")}</div>
+            <div className="alert-sub">{lowStock.map(p => `${p.name} (${totalStock(p)})`).join("  ·  ")}</div>
           </div>
           <div className="alert-cta">Manage →</div>
         </div>
@@ -1063,6 +1135,27 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
 
       <div className="card-flow">
         <NoticeBoard notices={notices} users={users} me={me} isAdmin={isAdmin} onAck={onAck} onPost={onPostNotice} />
+
+        {isAdmin && (
+          <div className="card" onClick={onGoStock} style={{ cursor: "pointer" }}>
+            <div className="card-title">🏬 Warehouse Overview</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+              <div style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#221E1A" }}>{totalMainStock}</div>
+                <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>Main</div>
+              </div>
+              <div style={{ background: "#F3ECE0", borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#9A7B4E" }}>{totalDispatchStock}</div>
+                <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>Dispatch</div>
+              </div>
+              <div style={{ background: "#F4E9E3", borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#B5715A" }}>{totalMainStock + totalDispatchStock}</div>
+                <div style={{ fontSize: 10, color: "#8A8073", textTransform: "uppercase", fontWeight: 600 }}>Total</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "#8A8073", marginTop: 10 }}>Tap to view full breakdown, transfer stock, and manage products →</div>
+          </div>
+        )}
 
         {!isAdmin && myTarget && (
           <div className="card">
@@ -1746,11 +1839,93 @@ function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit, onTrash }) 
   );
 }
 
+// ── INVENTORY (Warehouses + Products) ─────────────────────────────────────────
+function InventoryPage({ products, setItems, transfers, onTransfer, onAdd, onEdit, onTrash, onBulkAdd }) {
+  const [tab, setTab] = useState("warehouses");
+  return (
+    <div className="content">
+      <div className="page-tabs">
+        <button className={`btn btn-sm ${tab === "warehouses" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("warehouses")}>Warehouses</button>
+        <button className={`btn btn-sm ${tab === "products" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("products")}>Products ({products.length})</button>
+      </div>
+      {tab === "warehouses" && <WarehousesView products={products} transfers={transfers} onTransfer={onTransfer} />}
+      {tab === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" kind="product" items={products} setItems={setItems} onAdd={onAdd} onEdit={onEdit} onTrash={onTrash} onBulkAdd={onBulkAdd} />}
+    </div>
+  );
+}
+
+function WarehousesView({ products, transfers, onTransfer }) {
+  const [xferProduct, setXferProduct] = useState("");
+  const [xferQty, setXferQty] = useState("");
+  const totalMain = products.reduce((s, p) => s + (Number(p.stockMain) || 0), 0);
+  const totalDispatch = products.reduce((s, p) => s + (Number(p.stockDispatch) || 0), 0);
+  const chartData = products.map(p => ({ name: p.name.length > 22 ? p.name.slice(0, 20) + "…" : p.name, Main: Number(p.stockMain) || 0, Dispatch: Number(p.stockDispatch) || 0 }));
+  const selected = products.find(p => p.id === Number(xferProduct));
+  const doTransfer = () => {
+    if (!xferProduct || !xferQty) return;
+    onTransfer(Number(xferProduct), Number(xferQty));
+    setXferQty("");
+  };
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#221E1A" }}>{totalMain}</div><div className="kpi-lbl">Main Warehouse (Total)</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#9A7B4E" }}>{totalDispatch}</div><div className="kpi-lbl">Dispatch Warehouse (Total)</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#B5715A" }}>{totalMain + totalDispatch}</div><div className="kpi-lbl">Total Inventory</div></div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Stock by Product — Main vs Dispatch</div>
+        {chartData.length === 0 ? <div className="empty" style={{ padding: "20px 0" }}><div className="empty-lbl">No products yet.</div></div> : (
+          <ResponsiveContainer width="100%" height={Math.max(140, chartData.length * 34)}>
+            <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 20, left: 20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 11, fill: "#8A8073" }} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 10.5, fill: "#221E1A", fontWeight: 600 }} width={150} />
+              <Tooltip content={<CustomTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Main" fill="#221E1A" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="Dispatch" fill="#9A7B4E" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-title">Transfer Main → Dispatch</div>
+        <div className="card-sub" style={{ marginBottom: 12 }}>Move stock from Main (bulk/reserve) into Dispatch (ready for sales or installer pickup).</div>
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">Product</div>
+            <select className="field-select" value={xferProduct} onChange={e => setXferProduct(e.target.value)}>
+              <option value="">Select a product…</option>
+              {products.map(p => <option key={p.id} value={p.id}>{p.name} (Main: {p.stockMain || 0})</option>)}
+            </select>
+          </div>
+          <div className="form-group"><div className="field-label">Quantity</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={xferQty} onChange={e => setXferQty(e.target.value)} /></div>
+        </div>
+        {selected && Number(xferQty) > Number(selected.stockMain || 0) && (
+          <div className="login-err">Only {selected.stockMain || 0} available in Main warehouse.</div>
+        )}
+        <button className="btn btn-primary" onClick={doTransfer} disabled={!xferProduct || !xferQty}>Transfer to Dispatch</button>
+      </div>
+
+      <div className="section-hdr"><div className="section-title">Transfer History ({transfers.length})</div></div>
+      {transfers.length === 0 ? <div className="empty"><div className="empty-icon">🚚</div><div className="empty-lbl">No transfers logged yet.</div></div>
+        : transfers.map(t => (
+          <div className="list-item" key={t.id}>
+            <div className="item-meta"><div style={{ fontWeight: 700 }}>{t.product}</div><div style={{ fontWeight: 700, color: "#9A7B4E" }}>+{t.qty}</div></div>
+            <div className="item-time">{t.date} · by {t.by} · Main → Dispatch</div>
+          </div>
+        ))}
+    </>
+  );
+}
+
 // ── CATALOG (Dealers / Products) ──────────────────────────────────────────────
 function CatalogPage({ title, noun, icon, kind, items, setItems, onAdd, onEdit, onTrash, onBulkAdd }) {
   const remove = x => { setItems(items.filter(i => i.id !== x.id)); onTrash(kind, x); };
   return (
-    <div className="content">
+    <>
       <div className="section-hdr">
         <div className="section-title">{title} ({items.length})</div>
         <div style={{ display: "flex", gap: 6 }}>
@@ -1761,15 +1936,20 @@ function CatalogPage({ title, noun, icon, kind, items, setItems, onAdd, onEdit, 
       {items.length === 0
         ? <div className="empty"><div className="empty-icon">{icon}</div><div className="empty-lbl">No {title.toLowerCase()} yet. Add your first one.</div></div>
         : items.map(x => {
-          const hasStock = x.stock !== undefined;
-          const low = hasStock && Number(x.stock) <= Number(x.threshold);
+          const hasStock = x.stockMain !== undefined;
+          const total = totalStock(x);
+          const low = hasStock && total <= Number(x.threshold);
           return (
             <div className="user-row" key={x.id}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
                 {x.photo ? <img src={x.photo} alt={x.name} className="cat-photo" /> : <div className="cat-ic">{icon}</div>}
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{x.name}</div>
-                  {hasStock && <div style={{ fontSize: 11, color: "#8A8073" }}>{x.price ? `$${x.price} · ` : ""}In stock: <strong style={{ color: low ? "#EF4444" : "#221E1A" }}>{x.stock}</strong> · alert ≤ {x.threshold}</div>}
+                  {hasStock && (
+                    <div style={{ fontSize: 11, color: "#8A8073" }}>
+                      {x.price ? `$${x.price} · ` : ""}Main <strong style={{ color: "#221E1A" }}>{x.stockMain || 0}</strong> + Dispatch <strong style={{ color: "#221E1A" }}>{x.stockDispatch || 0}</strong> = <strong style={{ color: low ? "#EF4444" : "#221E1A" }}>{total}</strong> · alert ≤ {x.threshold}
+                    </div>
+                  )}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1780,7 +1960,7 @@ function CatalogPage({ title, noun, icon, kind, items, setItems, onAdd, onEdit, 
             </div>
           );
         })}
-    </div>
+    </>
   );
 }
 
@@ -1788,14 +1968,15 @@ function CatalogModal({ noun, edit, items, setItems, onClose }) {
   const isProduct = noun === "Product";
   const [name, setName] = useState(edit?.name || "");
   const [price, setPrice] = useState(edit?.price ?? "");
-  const [stock, setStock] = useState(edit?.stock ?? "");
+  const [stockMain, setStockMain] = useState(edit?.stockMain ?? "");
+  const [stockDispatch, setStockDispatch] = useState(edit?.stockDispatch ?? "");
   const [threshold, setThreshold] = useState(edit?.threshold ?? "");
   const [photo, setPhoto] = useState(edit?.photo || null);
   const hp = e => handlePhoto(e, setPhoto);
   const save = () => {
     const v = name.trim();
     if (!v) return;
-    const extra = isProduct ? { price: Number(price) || 0, stock: Number(stock) || 0, threshold: Number(threshold) || 0, photo } : {};
+    const extra = isProduct ? { price: Number(price) || 0, stockMain: Number(stockMain) || 0, stockDispatch: Number(stockDispatch) || 0, threshold: Number(threshold) || 0, photo } : {};
     if (edit) setItems(items.map(x => x.id === edit.id ? { ...x, name: v, ...extra } : x));
     else if (!items.some(x => x.name.toLowerCase() === v.toLowerCase())) setItems([...items, { id: Date.now(), name: v, ...extra }]);
     onClose();
@@ -1807,9 +1988,10 @@ function CatalogModal({ noun, edit, items, setItems, onClose }) {
       {isProduct && (<>
         <div className="form-group"><div className="field-label">Unit Price (SGD)</div><input className="field-input" type="number" inputMode="decimal" placeholder="0.00" value={price} onChange={e => setPrice(e.target.value)} /></div>
         <div className="input-row-2">
-          <div className="form-group"><div className="field-label">{edit ? "Current Stock" : "Opening Stock"}</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={stock} onChange={e => setStock(e.target.value)} /></div>
-          <div className="form-group"><div className="field-label">Low-Stock Alert ≤</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={threshold} onChange={e => setThreshold(e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">Main Warehouse Stock</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={stockMain} onChange={e => setStockMain(e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">Dispatch Warehouse Stock</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={stockDispatch} onChange={e => setStockDispatch(e.target.value)} /></div>
         </div>
+        <div className="form-group"><div className="field-label">Low-Stock Alert ≤ (total)</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={threshold} onChange={e => setThreshold(e.target.value)} /></div>
         <div className="form-group"><div className="field-label">Product Photo</div>
           <div className="photo-zone"><input type="file" accept="image/*" onChange={hp} />{photo ? <img src={photo} alt="product" className="photo-preview" /> : <><div className="photo-icon">🛁</div><div className="photo-lbl">Tap to upload a product photo</div></>}</div>
         </div>
@@ -1833,7 +2015,7 @@ function BulkAddProductsModal({ products, setProducts, onClose }) {
     names.forEach((name, i) => {
       if (existing.has(name.toLowerCase())) { skipped++; return; }
       existing.add(name.toLowerCase());
-      toAdd.push({ id: Date.now() + i, name, price: Number(price) || 0, stock: Number(stock) || 0, threshold: Number(threshold) || 0 });
+      toAdd.push({ id: Date.now() + i, name, price: Number(price) || 0, stockMain: Number(stock) || 0, stockDispatch: 0, threshold: Number(threshold) || 0 });
     });
     if (toAdd.length) setProducts([...products, ...toAdd]);
     setResult({ added: toAdd.length, skipped });
@@ -1848,7 +2030,7 @@ function BulkAddProductsModal({ products, setProducts, onClose }) {
       </div>
       <div className="input-row-3">
         <div className="form-group"><div className="field-label">Default Price</div><input className="field-input" type="number" inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} /></div>
-        <div className="form-group"><div className="field-label">Default Stock</div><input className="field-input" type="number" inputMode="numeric" value={stock} onChange={e => setStock(e.target.value)} /></div>
+        <div className="form-group"><div className="field-label">Default Stock (Main)</div><input className="field-input" type="number" inputMode="numeric" value={stock} onChange={e => setStock(e.target.value)} /></div>
         <div className="form-group"><div className="field-label">Low-Stock ≤</div><input className="field-input" type="number" inputMode="numeric" value={threshold} onChange={e => setThreshold(e.target.value)} /></div>
       </div>
       {result && (
@@ -2072,20 +2254,41 @@ function InstallJobsPage({ jobs, onAdd }) {
             <div style={{ fontSize: 12, color: "#8A8073" }}>📦 Collect: {j.collectPoint || "—"}</div>
             <div style={{ fontSize: 12, color: "#8A8073" }}>🗓 {j.date} · {fmt12h(j.timeFrom)}–{fmt12h(j.timeTo)}</div>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#9A7B4E" }}>Installer: {j.installer}</div>
+            {j.notesForInstaller && <div style={{ fontSize: 12, color: "#8A8073", fontStyle: "italic" }}>Note: {j.notesForInstaller}</div>}
+
+            {j.drawnItems && j.drawnItems.length > 0 && (
+              <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Drawn from Dispatch</div>
+                {j.drawnItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
+                {j.drawNotes && <div style={{ fontSize: 11, color: "#8A8073", fontStyle: "italic", marginTop: 4 }}>"{j.drawNotes}"</div>}
+                {j.drawPhoto && <img src={j.drawPhoto} alt="drawn items" className="photo-preview" style={{ marginTop: 6 }} />}
+              </div>
+            )}
+
             {j.arrivalPhoto && (
-              <>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Arrival</div>
                 <img src={j.arrivalPhoto} alt="arrival" className="photo-preview" />
-                <div style={{ fontSize: 11, color: "#8A8073" }}>
+                <div style={{ fontSize: 11, color: "#8A8073", marginTop: 4 }}>
                   Arrived {new Date(j.arrivalMeta.takenAt).toLocaleString("en-SG")}
                   {j.arrivalMeta.lat != null ? ` · ${j.arrivalMeta.lat.toFixed(5)}, ${j.arrivalMeta.lng.toFixed(5)}` : " · location unavailable"}
                 </div>
-              </>
+              </div>
             )}
-            {j.completionPhoto && (
-              <>
-                <img src={j.completionPhoto} alt="completed install" className="photo-preview" />
-                <div style={{ fontSize: 11, color: "#8A8073" }}>Completed {new Date(j.completionMeta.takenAt).toLocaleString("en-SG")}</div>
-              </>
+
+            {j.installedPhoto && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Installed — {j.installedQty} × {j.installedProduct}</div>
+                <img src={j.installedPhoto} alt="installed" className="photo-preview" />
+              </div>
+            )}
+
+            {j.returnedItems && j.returnedItems.length > 0 && (
+              <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Returned to Dispatch</div>
+                {j.returnedItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
+                {j.returnPhoto && <img src={j.returnPhoto} alt="returned items" className="photo-preview" style={{ marginTop: 6 }} />}
+              </div>
             )}
           </div>
         ))}
@@ -2103,10 +2306,11 @@ function InstallJobModal({ users, products, onSave, onClose }) {
   const [timeFrom, setTimeFrom] = useState("");
   const [timeTo, setTimeTo] = useState("");
   const [installer, setInstaller] = useState("");
+  const [notesForInstaller, setNotesForInstaller] = useState("");
   const [err, setErr] = useState("");
   const save = () => {
     if (!product || !qty || !address || !dateISO || !timeFrom || !timeTo || !installer) { setErr("Please fill in every field."); return; }
-    onSave({ product, qty: Number(qty) || 0, address, collectPoint, date: fmtDate(new Date(dateISO + "T00:00:00")), dateISO, timeFrom, timeTo, installer });
+    onSave({ product, qty: Number(qty) || 0, address, collectPoint, date: fmtDate(new Date(dateISO + "T00:00:00")), dateISO, timeFrom, timeTo, installer, notesForInstaller });
   };
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
@@ -2114,7 +2318,7 @@ function InstallJobModal({ users, products, onSave, onClose }) {
       <div className="form-group"><div className="field-label">Product to Install</div>
         <select className="field-select" value={product} onChange={e => setProduct(e.target.value)}>
           <option value="">Select a product…</option>
-          {products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+          {products.map(p => <option key={p.id} value={p.name}>{p.name} (Dispatch: {p.stockDispatch || 0})</option>)}
         </select>
       </div>
       <div className="form-group"><div className="field-label">Quantity</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={qty} onChange={e => setQty(e.target.value)} /></div>
@@ -2132,16 +2336,124 @@ function InstallJobModal({ users, products, onSave, onClose }) {
         </select>
         {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installer accounts yet — add one in User Management first.</div>}
       </div>
+      <div className="form-group"><div className="field-label">Notes for Installer (optional)</div>
+        <input className="field-input" placeholder="e.g. Bring both sizes, ceiling height unconfirmed" value={notesForInstaller} onChange={e => setNotesForInstaller(e.target.value)} />
+      </div>
       {err && <div className="login-err">{err}</div>}
       <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Create Job — Generate PO/DO</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
     </div></div>
   );
 }
 
-function InstallerJobsPage({ jobs, me, onAccept, onArrivalPhoto, onCompletionPhoto }) {
+// Installer's "Draw from Dispatch" step: freely pick any number of models/quantities
+// (pre-seeded with the job's planned product as a starting row), constrained by what's
+// actually available in Dispatch right now, plus one photo as proof of what was taken.
+function DrawItemsForm({ job, products, onDraw }) {
+  const [rows, setRows] = useState([{ product: job.product, qty: String(job.qty || 1) }]);
+  const [notes, setNotes] = useState("");
+  const [photo, setPhoto] = useState(null);
+  const [err, setErr] = useState("");
+  const hp = e => handlePhoto(e, setPhoto);
+  const setRow = (i, field, val) => setRows(rows.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+  const addRow = () => setRows([...rows, { product: "", qty: "1" }]);
+  const removeRow = i => setRows(rows.filter((_, idx) => idx !== i));
+  const availFor = name => products.find(p => p.name === name)?.stockDispatch || 0;
+  const confirm = () => {
+    const items = rows.filter(r => r.product && Number(r.qty) > 0).map(r => ({ product: r.product, qty: Number(r.qty) }));
+    if (items.length === 0) { setErr("Add at least one product and quantity."); return; }
+    const over = items.find(it => it.qty > availFor(it.product));
+    if (over) { setErr(`Only ${availFor(over.product)} of "${over.product}" available in Dispatch.`); return; }
+    if (!photo) { setErr("Please photograph the items being drawn."); return; }
+    onDraw(job.id, items, photo, notes);
+  };
+  return (
+    <>
+      <div className="field-label" style={{ marginTop: 4 }}>Step 1 — Draw from Dispatch Warehouse</div>
+      {job.notesForInstaller && <div style={{ fontSize: 12, color: "#8A8073", fontStyle: "italic", background: "var(--bg)", borderRadius: 8, padding: "8px 10px" }}>Admin note: "{job.notesForInstaller}"</div>}
+      {rows.map((r, i) => (
+        <div key={i} className="input-row-2" style={{ alignItems: "end" }}>
+          <div className="form-group"><div className="field-label">Product</div>
+            <select className="field-select" value={r.product} onChange={e => setRow(i, "product", e.target.value)}>
+              <option value="">Select a product…</option>
+              {products.map(p => <option key={p.id} value={p.name}>{p.name} (Dispatch: {p.stockDispatch || 0})</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input className="field-input" type="number" inputMode="numeric" placeholder="Qty" value={r.qty} onChange={e => setRow(i, "qty", e.target.value)} />
+            {rows.length > 1 && <button className="btn btn-danger btn-xs" onClick={() => removeRow(i)}>✕</button>}
+          </div>
+        </div>
+      ))}
+      <button className="btn btn-ghost btn-xs" style={{ alignSelf: "flex-start" }} onClick={addRow}>+ Add another model</button>
+      <div className="form-group"><div className="field-label">Notes (optional — why extra items, if any)</div><input className="field-input" placeholder="e.g. Bringing a spare in case of size mismatch" value={notes} onChange={e => setNotes(e.target.value)} /></div>
+      <div className="photo-zone">
+        <input type="file" accept="image/*" capture="environment" onChange={hp} />
+        {photo ? <img src={photo} alt="drawn" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph what's being drawn</div></>}
+      </div>
+      {err && <div className="login-err">{err}</div>}
+      <button className="btn btn-primary btn-sm" onClick={confirm}>Confirm Draw</button>
+    </>
+  );
+}
+
+// Installer's final step: confirm which drawn item was actually installed (only one
+// item/qty combo counts — the rest of what was drawn auto-returns to Dispatch).
+function CompleteInstallForm({ job, onComplete }) {
+  const options = job.drawnItems || [];
+  const [product, setProduct] = useState(options[0]?.product || "");
+  const [qty, setQty] = useState(String(options[0]?.qty || 1));
+  const [installedPhoto, setInstalledPhoto] = useState(null);
+  const [returnPhoto, setReturnPhoto] = useState(null);
+  const [err, setErr] = useState("");
+  const hpInstalled = e => handlePhoto(e, setInstalledPhoto);
+  const hpReturn = e => handlePhoto(e, setReturnPhoto);
+  const maxQty = options.find(o => o.product === product)?.qty || 0;
+  const returned = options.map(o => o.product === product ? { product: o.product, qty: o.qty - (Number(qty) || 0) } : { ...o }).filter(o => o.qty > 0);
+  const submit = () => {
+    if (!product || !qty || Number(qty) <= 0) { setErr("Select the installed product and quantity."); return; }
+    if (Number(qty) > maxQty) { setErr(`Can't install more than the ${maxQty} drawn.`); return; }
+    if (!installedPhoto) { setErr("Please photograph the installed product."); return; }
+    if (returned.length > 0 && !returnPhoto) { setErr("Please photograph the item(s) being returned to Dispatch."); return; }
+    onComplete(job.id, product, Number(qty), installedPhoto, returned, returnPhoto);
+  };
+  return (
+    <>
+      <div className="field-label" style={{ marginTop: 4 }}>Step 3 — Confirm what was installed</div>
+      <div className="input-row-2">
+        <div className="form-group"><div className="field-label">Installed Product</div>
+          <select className="field-select" value={product} onChange={e => setProduct(e.target.value)}>
+            {options.map((o, i) => <option key={i} value={o.product}>{o.product}</option>)}
+          </select>
+        </div>
+        <div className="form-group"><div className="field-label">Qty Installed</div><input className="field-input" type="number" inputMode="numeric" value={qty} onChange={e => setQty(e.target.value)} /></div>
+      </div>
+      <div className="photo-zone">
+        <input type="file" accept="image/*" capture="environment" onChange={hpInstalled} />
+        {installedPhoto ? <img src={installedPhoto} alt="installed" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the installed product</div></>}
+      </div>
+      {returned.length > 0 && (
+        <>
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Will return to Dispatch:</div>
+            {returned.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
+          </div>
+          <div className="field-label">Return Photo</div>
+          <div className="photo-zone">
+            <input type="file" accept="image/*" capture="environment" onChange={hpReturn} />
+            {returnPhoto ? <img src={returnPhoto} alt="returned" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the returned item(s)</div></>}
+          </div>
+        </>
+      )}
+      {err && <div className="login-err">{err}</div>}
+      <button className="btn btn-primary btn-sm" onClick={submit}>Complete Job</button>
+    </>
+  );
+}
+
+function InstallerJobsPage({ jobs, products, me, onAccept, onDraw, onArrivalPhoto, onComplete }) {
   const mine = jobs.filter(j => j.installer === me);
   const pending = mine.filter(j => j.status === "pending");
-  const active = mine.filter(j => j.status === "accepted" || j.status === "arrived");
+  const active = mine.filter(j => ["accepted", "drawn", "arrived"].includes(j.status));
   const done = mine.filter(j => j.status === "completed");
   return (
     <div className="content">
@@ -2160,20 +2472,28 @@ function InstallerJobsPage({ jobs, me, onAccept, onArrivalPhoto, onCompletionPho
       {active.map(j => (
         <div className="list-item" key={j.id}>
           <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.product}</div><span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span></div>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>Qty to install: {j.qty}</div>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>Suggested: {j.qty} × {j.product}</div>
           <div style={{ fontSize: 12, color: "#8A8073" }}>📍 Jobsite: {j.address}</div>
           <div style={{ fontSize: 12, color: "#8A8073" }}>📦 Collect goods: {j.collectPoint || "—"}</div>
           <div style={{ fontSize: 12, color: "#8A8073" }}>🗓 {j.date} · {fmt12h(j.timeFrom)}–{fmt12h(j.timeTo)}</div>
           <div style={{ fontSize: 11, color: "#8A8073" }}>{j.poNo} · {j.doNo}</div>
-          {j.status === "accepted" && (
+
+          {j.status === "accepted" && <DrawItemsForm job={j} products={products} onDraw={onDraw} />}
+
+          {j.status === "drawn" && (
             <>
-              <div className="field-label" style={{ marginTop: 4 }}>Step 1 — Arrival photo (unit number)</div>
+              <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Drawn from Dispatch</div>
+                {j.drawnItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
+              </div>
+              <div className="field-label" style={{ marginTop: 4 }}>Step 2 — Arrival photo (unit number)</div>
               <div className="photo-zone">
                 <input type="file" accept="image/*" capture="environment" onChange={e => { const f = e.target.files[0]; if (f) onArrivalPhoto(j.id, f); }} />
                 <div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the unit number — records time & location</div>
               </div>
             </>
           )}
+
           {j.status === "arrived" && (
             <>
               {j.arrivalPhoto && <img src={j.arrivalPhoto} alt="arrival" className="photo-preview" />}
@@ -2181,11 +2501,7 @@ function InstallerJobsPage({ jobs, me, onAccept, onArrivalPhoto, onCompletionPho
                 Arrived {new Date(j.arrivalMeta.takenAt).toLocaleString("en-SG")}
                 {j.arrivalMeta.lat != null ? ` · ${j.arrivalMeta.lat.toFixed(5)}, ${j.arrivalMeta.lng.toFixed(5)}` : " · location unavailable"}
               </div>
-              <div className="field-label" style={{ marginTop: 4 }}>Step 2 — Completion photo (installed product)</div>
-              <div className="photo-zone">
-                <input type="file" accept="image/*" capture="environment" onChange={e => { const f = e.target.files[0]; if (f) onCompletionPhoto(j.id, f); }} />
-                <div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the installed product</div>
-              </div>
+              <CompleteInstallForm job={j} onComplete={onComplete} />
             </>
           )}
         </div>
@@ -2194,11 +2510,11 @@ function InstallerJobsPage({ jobs, me, onAccept, onArrivalPhoto, onCompletionPho
       {done.length > 0 && <div className="section-title" style={{ marginTop: 8 }}>Completed ({done.length})</div>}
       {done.map(j => (
         <div className="list-item" key={j.id} style={{ opacity: 0.85 }}>
-          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.product}</div><span className="badge badge-completed">Completed</span></div>
+          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.installedQty} × {j.installedProduct}</div><span className="badge badge-completed">Completed</span></div>
           <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {j.address}</div>
           <div style={{ display: "flex", gap: 8 }}>
             {j.arrivalPhoto && <img src={j.arrivalPhoto} alt="arrival" className="photo-preview" style={{ flex: 1 }} />}
-            {j.completionPhoto && <img src={j.completionPhoto} alt="installed" className="photo-preview" style={{ flex: 1 }} />}
+            {j.installedPhoto && <img src={j.installedPhoto} alt="installed" className="photo-preview" style={{ flex: 1 }} />}
           </div>
         </div>
       ))}
