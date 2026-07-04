@@ -593,23 +593,17 @@ const NAV = [
   { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false, roles: SALES_ROLES },
   { id: "documents", label: "Documents", icon: "📄", admin: false, roles: SALES_ROLES },
   { id: "tasks", label: "Tasks & Servicing", icon: "🧰", admin: false, roles: SALES_ROLES },
-  { id: "claims", label: "My Claims", icon: "🧾", admin: false, roles: SALES_ROLES },
+  { id: "claims", label: "Claims", icon: "🧾", admin: false, roles: SALES_ROLES },
   { id: "install-jobs-mine", label: "My Jobs", icon: "🛠️", admin: false, roles: ["installer"] },
   { id: "trash", label: "Trash", icon: "🗑️", admin: false },
   { id: "reports", label: "Reports", icon: "📈", admin: true },
-  { id: "damage-review", label: "Damage Review", icon: "🔍", admin: true },
-  { id: "doc-overview", label: "Doc Overview", icon: "🗂️", admin: true },
-  { id: "stock", label: "Stock Summary", icon: "📦", admin: true },
   { id: "dealers", label: "Dealers", icon: "🤝", admin: true },
   { id: "inventory", label: "Inventory", icon: "🏬", admin: true },
   { id: "install-jobs", label: "Installation Jobs", icon: "🛠️", admin: true },
-  { id: "claims-review", label: "Claims Review", icon: "🧾", admin: true },
   { id: "targets", label: "Sales Targets", icon: "🎯", admin: true },
   { id: "finance", label: "Finance", icon: "💰", admin: true },
   { id: "users", label: "User Management", icon: "👥", admin: true },
-  { id: "company-settings", label: "Company Settings", icon: "🏢", admin: true, super: true },
-  { id: "balance-sheet", label: "Balance Sheet", icon: "📒", admin: true, super: true },
-  { id: "system", label: "Data Management", icon: "🗄️", admin: true, super: true },
+  { id: "settings", label: "Settings", icon: "⚙️", admin: true, super: true },
 ];
 
 const CHART_COLORS = ["#9A7B4E", "#10B981", "#F59E0B", "#B5715A", "#EF4444"];
@@ -940,25 +934,19 @@ export default function App() {
 
           {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("inventory")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
           {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} />}
-          {page === "damage" && <DamagePage damages={damages} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} />}
+          {page === "damage" && <DamagePage damages={damages} setDamages={setDamages} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} />}
           {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} onDelete={deleteDoc} />}
           {page === "reports" && <ReportsPage logs={logs} />}
-          {page === "damage-review" && <DamageReviewPage damages={damages} setDamages={setDamages} />}
-          {page === "doc-overview" && <DocOverviewPage docs={docs} />}
-          {page === "stock" && <StockPage logs={logs} />}
           {page === "dealers" && <DealersPage dealers={dealers} setDealers={setDealers} users={users} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} onTrash={trashItem} />}
-          {page === "inventory" && <InventoryPage products={products} setItems={setProducts} transfers={transfers} onTransfer={transferStock} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} onBulkAdd={() => setModal("bulk-products")} />}
+          {page === "inventory" && <InventoryPage products={products} setItems={setProducts} transfers={transfers} onTransfer={transferStock} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} onBulkAdd={() => setModal("bulk-products")} logs={logs} />}
           {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} onTrash={trashItem} />}
           {page === "trash" && <TrashPage trash={trash} me={user.name} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onRestore={restoreTrash} onPermanentDelete={permanentDelete} onEmpty={emptyTrash} />}
           {page === "install-jobs" && <InstallJobsPage jobs={installJobs} onAdd={() => setModal("install-job")} />}
           {page === "install-jobs-mine" && <InstallerJobsPage jobs={installJobs} products={products} me={user.name} onAccept={acceptInstallJob} onDraw={drawJobItems} onArrivalPhoto={captureArrivalJobPhoto} onComplete={completeInstallJob} />}
           {page === "targets" && <TargetsPage targets={targets} setTargets={setTargets} users={users} />}
-          {page === "claims" && <ClaimsPage claims={claims} me={user.name} onAdd={() => setModal("claim")} />}
-          {page === "claims-review" && <ClaimsReviewPage claims={claims} setClaims={setClaims} />}
+          {page === "claims" && <ClaimsPage claims={claims} setClaims={setClaims} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("claim")} />}
           {page === "finance" && <FinancePage logs={logs} claims={claims} invoices={invoices} supplierPayments={supplierPayments} onGenerateInvoice={generateInvoice} onMarkPaid={markInvoicePaid} onMarkSent={markInvoiceSent} onAddSupplierPayment={addSupplierPayment} />}
-          {page === "balance-sheet" && isSuperAdmin && <BalanceSheetPage invoices={invoices} supplierPayments={supplierPayments} claims={claims} />}
-          {page === "company-settings" && isSuperAdmin && <CompanySettingsPage settings={companySettings} setSettings={setCompanySettings} counters={docCounters} setCounters={setDocCounters} />}
-          {page === "system" && isSuperAdmin && <SystemPage logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} trash={trash} notices={notices} onLoad={loadTestData} onClear={clearAllData} />}
+          {page === "settings" && isSuperAdmin && <SettingsPage settings={companySettings} setSettings={setCompanySettings} counters={docCounters} setCounters={setDocCounters} invoices={invoices} supplierPayments={supplierPayments} claims={claims} logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} trash={trash} notices={notices} onLoad={loadTestData} onClear={clearAllData} />}
           {page === "users" && <UserMgmtPage users={users} setUsers={setUsers} currentUser={user} onAdd={() => { setEditUser(null); setModal("user"); }} onEdit={u => { setEditUser(u); setModal("user"); }} onTrash={trashItem} />}
         </div>
       </div>
@@ -1596,54 +1584,107 @@ function LogRow({ log, onDelete }) {
 }
 
 // ── DAMAGE PAGE ───────────────────────────────────────────────────────────────
-function DamagePage({ damages, me, isAdmin, onAdd, onDelete }) {
+function DamagePage({ damages, setDamages, me, isAdmin, onAdd, onDelete }) {
+  const [tab, setTab] = useState("mine");
   const list = isAdmin ? damages : damages.filter(d => d.by === me);
   return (
     <div className="content">
-      <div className="section-hdr"><div className="section-title">Damage Returns ({list.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Report Damage</button></div>
-      {list.length === 0 ? <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No damage returns filed.</div></div>
-        : list.map((d, i) => (
-          <div className="list-item" key={d.id ?? i}>
+      {isAdmin && (
+        <div className="page-tabs">
+          <button className={`btn btn-sm ${tab === "mine" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("mine")}>All Reports</button>
+          <button className={`btn btn-sm ${tab === "review" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("review")}>Review ({damages.filter(d => d.status === "pending").length})</button>
+        </div>
+      )}
+      {tab === "mine" && (<>
+        <div className="section-hdr"><div className="section-title">Damage Returns ({list.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Report Damage</button></div>
+        {list.length === 0 ? <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No damage returns filed.</div></div>
+          : list.map((d, i) => (
+            <div className="list-item" key={d.id ?? i}>
+              <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className={`badge badge-${d.status}`}>{d.status}</span></div>
+              <div className="item-time">{d.date} · by {d.by}</div>
+              {d.qty && <div style={{ fontSize: 13, fontWeight: 500 }}>Qty: {d.qty}</div>}
+              {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
+              {d.photo && <img src={d.photo} alt="dmg" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)" }} />}
+              <button className="btn btn-danger btn-xs" style={{ alignSelf: "flex-start" }} onClick={() => onDelete(d)}>🗑 Delete</button>
+            </div>
+          ))}
+      </>)}
+      {tab === "review" && isAdmin && <DamageReviewView damages={damages} setDamages={setDamages} />}
+    </div>
+  );
+}
+
+function DamageReviewView({ damages, setDamages }) {
+  const update = (i, status) => setDamages(damages.map((d, idx) => idx === i ? { ...d, status } : d));
+  return (
+    <>
+      <div className="section-title">Pending ({damages.filter(d=>d.status==="pending").length})</div>
+      {damages.filter(d=>d.status==="pending").length === 0 && <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No pending damage returns.</div></div>}
+      {damages.map((d, i) => d.status === "pending" && (
+        <div className="list-item" key={i}>
+          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className="badge badge-pending">Pending</span></div>
+          <div className="item-time">{d.date} · by {d.by}</div>
+          {d.qty && <div style={{ fontSize: 13 }}>Qty: {d.qty}</div>}
+          {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
+          {d.photo && <img src={d.photo} alt="dmg" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8 }} />}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={() => update(i, "reviewed")}>Mark Reviewed</button>
+            <button className="btn btn-danger btn-sm" style={{ flex: 1 }} onClick={() => update(i, "rejected")}>Reject</button>
+          </div>
+        </div>
+      ))}
+      {damages.filter(d=>d.status!=="pending").length > 0 && <>
+        <div className="divider" />
+        <div className="section-title">Reviewed</div>
+        {damages.map((d,i) => d.status !== "pending" && (
+          <div className="list-item" key={i}>
             <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className={`badge badge-${d.status}`}>{d.status}</span></div>
             <div className="item-time">{d.date} · by {d.by}</div>
-            {d.qty && <div style={{ fontSize: 13, fontWeight: 500 }}>Qty: {d.qty}</div>}
-            {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
-            {d.photo && <img src={d.photo} alt="dmg" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)" }} />}
-            <button className="btn btn-danger btn-xs" style={{ alignSelf: "flex-start" }} onClick={() => onDelete(d)}>🗑 Delete</button>
           </div>
         ))}
-    </div>
+      </>}
+    </>
   );
 }
 
 // ── DOCUMENTS ─────────────────────────────────────────────────────────────────
 function DocumentsPage({ docs, me, isAdmin, onAdd, onDelete }) {
+  const [tab, setTab] = useState("mine");
   const [filter, setFilter] = useState("ALL");
   const visible = isAdmin ? docs : docs.filter(d => d.by === me);
   const filtered = filter === "ALL" ? visible : visible.filter(d => d.type === filter);
   return (
     <div className="content">
-      <div className="filter-tabs">
-        {["ALL","DO","PO","BILL"].map(t => <button key={t} className={`btn btn-sm ${filter === t ? "btn-primary" : "btn-ghost"}`} onClick={() => setFilter(t)}>{t}</button>)}
-      </div>
-      <div className="section-hdr">
-        <div className="section-title">Documents ({filtered.length})</div>
-        <div style={{ display: "flex", gap: 6 }}>
-          {["DO","PO","BILL"].map(t => <button key={t} className="btn btn-ghost btn-xs" onClick={() => onAdd(t)}>+ {t}</button>)}
+      {isAdmin && (
+        <div className="page-tabs">
+          <button className={`btn btn-sm ${tab === "mine" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("mine")}>Documents</button>
+          <button className={`btn btn-sm ${tab === "overview" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("overview")}>Overview</button>
         </div>
-      </div>
-      {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📄</div><div className="empty-lbl">No documents yet.</div></div>
-        : filtered.map((d, i) => (
-          <div className="list-item" key={d.id ?? i}>
-            <div className="item-meta"><div><span className={`badge badge-${d.type.toLowerCase()}`}>{d.type}</span><div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>{d.refNo || "—"}</div></div><div className="item-time">{d.date}</div></div>
-            {d.party && <div style={{ fontSize: 12, color: "#9A7B4E", fontWeight: 500 }}>{d.party}</div>}
-            {d.amount && <div style={{ fontSize: 15, fontWeight: 700, color: "#10B981" }}>SGD {parseFloat(d.amount).toFixed(2)}</div>}
-            {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
-            {d.photo && <img src={d.photo} alt="doc" className="photo-preview" />}
-            <div className="item-time">Filed by {d.by}</div>
-            <button className="btn btn-danger btn-xs" style={{ alignSelf: "flex-start" }} onClick={() => onDelete(d)}>🗑 Delete</button>
+      )}
+      {tab === "mine" && (<>
+        <div className="filter-tabs">
+          {["ALL","DO","PO","BILL"].map(t => <button key={t} className={`btn btn-sm ${filter === t ? "btn-primary" : "btn-ghost"}`} onClick={() => setFilter(t)}>{t}</button>)}
+        </div>
+        <div className="section-hdr">
+          <div className="section-title">Documents ({filtered.length})</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {["DO","PO","BILL"].map(t => <button key={t} className="btn btn-ghost btn-xs" onClick={() => onAdd(t)}>+ {t}</button>)}
           </div>
-        ))}
+        </div>
+        {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📄</div><div className="empty-lbl">No documents yet.</div></div>
+          : filtered.map((d, i) => (
+            <div className="list-item" key={d.id ?? i}>
+              <div className="item-meta"><div><span className={`badge badge-${d.type.toLowerCase()}`}>{d.type}</span><div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>{d.refNo || "—"}</div></div><div className="item-time">{d.date}</div></div>
+              {d.party && <div style={{ fontSize: 12, color: "#9A7B4E", fontWeight: 500 }}>{d.party}</div>}
+              {d.amount && <div style={{ fontSize: 15, fontWeight: 700, color: "#10B981" }}>SGD {parseFloat(d.amount).toFixed(2)}</div>}
+              {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
+              {d.photo && <img src={d.photo} alt="doc" className="photo-preview" />}
+              <div className="item-time">Filed by {d.by}</div>
+              <button className="btn btn-danger btn-xs" style={{ alignSelf: "flex-start" }} onClick={() => onDelete(d)}>🗑 Delete</button>
+            </div>
+          ))}
+      </>)}
+      {tab === "overview" && isAdmin && <DocOverviewView docs={docs} />}
     </div>
   );
 }
@@ -1707,42 +1748,8 @@ function ReportsPage({ logs }) {
   );
 }
 
-// ── DAMAGE REVIEW ─────────────────────────────────────────────────────────────
-function DamageReviewPage({ damages, setDamages }) {
-  const update = (i, status) => setDamages(damages.map((d, idx) => idx === i ? { ...d, status } : d));
-  return (
-    <div className="content">
-      <div className="section-title">Pending ({damages.filter(d=>d.status==="pending").length})</div>
-      {damages.filter(d=>d.status==="pending").length === 0 && <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No pending damage returns.</div></div>}
-      {damages.map((d, i) => d.status === "pending" && (
-        <div className="list-item" key={i}>
-          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className="badge badge-pending">Pending</span></div>
-          <div className="item-time">{d.date} · by {d.by}</div>
-          {d.qty && <div style={{ fontSize: 13 }}>Qty: {d.qty}</div>}
-          {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
-          {d.photo && <img src={d.photo} alt="dmg" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8 }} />}
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={() => update(i, "reviewed")}>Mark Reviewed</button>
-            <button className="btn btn-danger btn-sm" style={{ flex: 1 }} onClick={() => update(i, "rejected")}>Reject</button>
-          </div>
-        </div>
-      ))}
-      {damages.filter(d=>d.status!=="pending").length > 0 && <>
-        <div className="divider" />
-        <div className="section-title">Reviewed</div>
-        {damages.map((d,i) => d.status !== "pending" && (
-          <div className="list-item" key={i}>
-            <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className={`badge badge-${d.status}`}>{d.status}</span></div>
-            <div className="item-time">{d.date} · by {d.by}</div>
-          </div>
-        ))}
-      </>}
-    </div>
-  );
-}
-
 // ── DOC OVERVIEW ──────────────────────────────────────────────────────────────
-function DocOverviewPage({ docs }) {
+function DocOverviewView({ docs }) {
   const [type, setType] = useState("ALL"); const [from, setFrom] = useState(""); const [to, setTo] = useState("");
   const filtered = docs.filter(d => {
     if (type !== "ALL" && d.type !== type) return false;
@@ -1752,7 +1759,7 @@ function DocOverviewPage({ docs }) {
   });
   const totalAmt = filtered.reduce((s,d) => s+(parseFloat(d.amount)||0), 0);
   return (
-    <div className="content">
+    <>
       <div className="card">
         <div className="filter-tabs">{["ALL","DO","PO","BILL"].map(t=><button key={t} className={`btn btn-sm ${type===t?"btn-primary":"btn-ghost"}`} onClick={()=>setType(t)}>{t}</button>)}</div>
         <div className="input-row-2" style={{ marginTop: 10 }}>
@@ -1773,20 +1780,21 @@ function DocOverviewPage({ docs }) {
             <div className="item-time">Filed by {d.by}</div>
           </div>
         ))}
-    </div>
+    </>
   );
 }
 
 // ── STOCK ─────────────────────────────────────────────────────────────────────
-function StockPage({ logs }) {
+function StockCalcView({ logs }) {
   const [opening, setOpening] = useState(0);
   const totalSold = logs.reduce((s,l)=>s+Number(l.sold),0);
   const totalReturned = logs.reduce((s,l)=>s+Number(l.returned),0);
   const current = Number(opening) - totalSold + totalReturned;
   return (
-    <div className="content">
+    <>
       <div className="card">
         <div className="card-title" style={{ marginBottom: 10 }}>Opening Stock</div>
+        <div className="card-sub" style={{ marginBottom: 10 }}>Legacy manual calculator based on daily order logs (delivered/returned). For live per-product stock, see the Warehouses tab.</div>
         <input className="field-input" type="number" inputMode="numeric" placeholder="Enter opening stock count" value={opening} onChange={e=>setOpening(e.target.value)} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -1799,7 +1807,7 @@ function StockPage({ logs }) {
         <div style={{ fontSize: 56, fontWeight: 900, color: current<0?"var(--red)":"var(--green)", textAlign: "center", padding: "12px 0" }}>{current}</div>
         <div style={{ fontSize: 12, color: "#8A8073", textAlign: "center" }}>Opening − Delivered + Returned</div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -1840,16 +1848,18 @@ function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit, onTrash }) 
 }
 
 // ── INVENTORY (Warehouses + Products) ─────────────────────────────────────────
-function InventoryPage({ products, setItems, transfers, onTransfer, onAdd, onEdit, onTrash, onBulkAdd }) {
+function InventoryPage({ products, setItems, transfers, onTransfer, onAdd, onEdit, onTrash, onBulkAdd, logs }) {
   const [tab, setTab] = useState("warehouses");
   return (
     <div className="content">
       <div className="page-tabs">
         <button className={`btn btn-sm ${tab === "warehouses" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("warehouses")}>Warehouses</button>
         <button className={`btn btn-sm ${tab === "products" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("products")}>Products ({products.length})</button>
+        <button className={`btn btn-sm ${tab === "stockcalc" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("stockcalc")}>Stock Calc</button>
       </div>
       {tab === "warehouses" && <WarehousesView products={products} transfers={transfers} onTransfer={onTransfer} />}
       {tab === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" kind="product" items={products} setItems={setItems} onAdd={onAdd} onEdit={onEdit} onTrash={onTrash} onBulkAdd={onBulkAdd} />}
+      {tab === "stockcalc" && <StockCalcView logs={logs} />}
     </div>
   );
 }
@@ -2523,7 +2533,7 @@ function InstallerJobsPage({ jobs, products, me, onAccept, onDraw, onArrivalPhot
 }
 
 // ── COMPANY SETTINGS (super admin) ────────────────────────────────────────────
-function CompanySettingsPage({ settings, setSettings, counters, setCounters }) {
+function CompanySettingsView({ settings, setSettings, counters, setCounters }) {
   const [form, setForm] = useState(settings);
   const [nums, setNums] = useState(counters);
   const [saved, setSaved] = useState("");
@@ -2535,7 +2545,7 @@ function CompanySettingsPage({ settings, setSettings, counters, setCounters }) {
     setSaved("numbers"); setTimeout(() => setSaved(""), 2000);
   };
   return (
-    <div className="content">
+    <>
       <div className="card">
         <div className="card-title">Company Details</div>
         <div className="card-sub" style={{ marginBottom: 14 }}>Shown on every PO, DO and Tax Invoice generated across the system.</div>
@@ -2569,7 +2579,7 @@ function CompanySettingsPage({ settings, setSettings, counters, setCounters }) {
         <div style={{ fontSize: 12, color: "#8A8073", marginBottom: 14 }}>Next document will be <strong>{nums.poPrefix}{nums.poNext}</strong> / <strong>{nums.doPrefix}{nums.doNext}</strong>.</div>
         <button className="btn btn-primary" onClick={saveNumbers}>{saved === "numbers" ? "✓ Saved" : "Save Numbering"}</button>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -2608,20 +2618,30 @@ function TargetsPage({ targets, setTargets, users }) {
 }
 
 // ── CLAIMS ─────────────────────────────────────────────────────────────────────
-function ClaimsPage({ claims, me, onAdd }) {
+function ClaimsPage({ claims, setClaims, me, isAdmin, onAdd }) {
+  const [tab, setTab] = useState("mine");
   const mine = claims.filter(c => c.by === me);
   return (
     <div className="content">
-      <div className="section-hdr"><div className="section-title">My Claims ({mine.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Claim</button></div>
-      {mine.length === 0 ? <div className="empty"><div className="empty-icon">🧾</div><div className="empty-lbl">No claims submitted yet.</div></div>
-        : mine.map(c => (
-          <div className="list-item" key={c.id}>
-            <div className="item-meta"><div style={{ fontSize: 15, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className={`badge badge-${c.status === "pending" ? "pending" : c.status === "approved" ? "reviewed" : "rejected"}`}>{c.status}</span></div>
-            <div className="item-time">{c.date}{c.dealer ? ` · ${c.dealer}` : ""}</div>
-            {c.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{c.notes}</div>}
-            {c.photo && <img src={c.photo} alt="receipt" className="photo-preview" />}
-          </div>
-        ))}
+      {isAdmin && (
+        <div className="page-tabs">
+          <button className={`btn btn-sm ${tab === "mine" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("mine")}>My Claims</button>
+          <button className={`btn btn-sm ${tab === "review" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("review")}>Review ({claims.filter(c => c.status === "pending").length})</button>
+        </div>
+      )}
+      {tab === "mine" && (<>
+        <div className="section-hdr"><div className="section-title">My Claims ({mine.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Claim</button></div>
+        {mine.length === 0 ? <div className="empty"><div className="empty-icon">🧾</div><div className="empty-lbl">No claims submitted yet.</div></div>
+          : mine.map(c => (
+            <div className="list-item" key={c.id}>
+              <div className="item-meta"><div style={{ fontSize: 15, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className={`badge badge-${c.status === "pending" ? "pending" : c.status === "approved" ? "reviewed" : "rejected"}`}>{c.status}</span></div>
+              <div className="item-time">{c.date}{c.dealer ? ` · ${c.dealer}` : ""}</div>
+              {c.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{c.notes}</div>}
+              {c.photo && <img src={c.photo} alt="receipt" className="photo-preview" />}
+            </div>
+          ))}
+      </>)}
+      {tab === "review" && isAdmin && <ClaimsReviewView claims={claims} setClaims={setClaims} />}
     </div>
   );
 }
@@ -2658,12 +2678,12 @@ function ClaimModal({ user, dealers, onSave, onClose }) {
   );
 }
 
-function ClaimsReviewPage({ claims, setClaims }) {
+function ClaimsReviewView({ claims, setClaims }) {
   const update = (id, status) => setClaims(claims.map(c => c.id === id ? { ...c, status } : c));
   const pending = claims.filter(c => c.status === "pending");
   const reviewed = claims.filter(c => c.status !== "pending");
   return (
-    <div className="content">
+    <>
       <div className="section-title">Pending ({pending.length})</div>
       {pending.length === 0 && <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No pending claims.</div></div>}
       {pending.map(c => (
@@ -2688,7 +2708,7 @@ function ClaimsReviewPage({ claims, setClaims }) {
           </div>
         ))}
       </>}
-    </div>
+    </>
   );
 }
 
@@ -2934,7 +2954,7 @@ function FinancePage({ logs, claims, invoices, supplierPayments, onGenerateInvoi
 }
 
 // ── BALANCE SHEET (super admin) ───────────────────────────────────────────────
-function BalanceSheetPage({ invoices, supplierPayments, claims }) {
+function BalanceSheetView({ invoices, supplierPayments, claims }) {
   const [view, setView] = useState("month");
   const approvedClaims = claims.filter(c => c.status === "approved");
   const paidInvoices = invoices.filter(i => i.status === "paid" && i.paidDateISO);
@@ -2957,7 +2977,7 @@ function BalanceSheetPage({ invoices, supplierPayments, claims }) {
   const totalOut = rows.reduce((s, r) => s + r.out, 0);
 
   return (
-    <div className="content">
+    <>
       <div className="section-hdr">
         <div className="section-title">Balance Sheet</div>
         <div className="filter-tabs">
@@ -2997,17 +3017,17 @@ function BalanceSheetPage({ invoices, supplierPayments, claims }) {
             </div>
           </div>
         ))}
-    </div>
+    </>
   );
 }
 
 // ── DATA MANAGEMENT (super admin) ─────────────────────────────────────────────
-function SystemPage({ logs, damages, docs, dealers, products, tasks, trash, notices, onLoad, onClear }) {
+function SystemPageView({ logs, damages, docs, dealers, products, tasks, trash, notices, onLoad, onClear }) {
   const rows = [["Daily logs", logs.length], ["Damage", damages.length], ["Documents", docs.length], ["Dealers", dealers.length], ["Products", products.length], ["Tasks", tasks.length], ["Trash", trash.length], ["Notices", notices.length]];
   const load = () => { if (window.confirm("Load sample test data? This overwrites current logs, documents, dealers, products, tasks, trash and notices. User accounts are kept.")) onLoad(); };
   const clear = () => { if (window.confirm("Delete ALL business data (logs, documents, dealers, products, tasks, trash, notices)? User accounts are kept. This cannot be undone.")) onClear(); };
   return (
-    <div className="content">
+    <>
       <div className="card">
         <div className="card-title">Current Data</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
@@ -3029,6 +3049,23 @@ function SystemPage({ logs, damages, docs, dealers, products, tasks, trash, noti
         <div className="card-sub" style={{ marginBottom: 14 }}>Permanently removes all logs, damage reports, documents, dealers, products, tasks, trash and notices, leaving a clean slate for real use. User accounts are kept. This cannot be undone.</div>
         <button className="btn btn-danger" onClick={clear}>Clear All Data</button>
       </div>
+    </>
+  );
+}
+
+// ── SETTINGS (super admin) — Company / Balance Sheet / Data Management ────────
+function SettingsPage({ settings, setSettings, counters, setCounters, invoices, supplierPayments, claims, logs, damages, docs, dealers, products, tasks, trash, notices, onLoad, onClear }) {
+  const [tab, setTab] = useState("company");
+  return (
+    <div className="content">
+      <div className="page-tabs">
+        <button className={`btn btn-sm ${tab === "company" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("company")}>Company</button>
+        <button className={`btn btn-sm ${tab === "balance" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("balance")}>Balance Sheet</button>
+        <button className={`btn btn-sm ${tab === "data" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("data")}>Data Management</button>
+      </div>
+      {tab === "company" && <CompanySettingsView settings={settings} setSettings={setSettings} counters={counters} setCounters={setCounters} />}
+      {tab === "balance" && <BalanceSheetView invoices={invoices} supplierPayments={supplierPayments} claims={claims} />}
+      {tab === "data" && <SystemPageView logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} trash={trash} notices={notices} onLoad={onLoad} onClear={onClear} />}
     </div>
   );
 }
