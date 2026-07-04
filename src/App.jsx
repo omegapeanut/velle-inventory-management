@@ -37,17 +37,42 @@ function usePersistentState(key, seed) {
   return [state, set];
 }
 
-// Photo upload: sends to Cloudinary when configured (stores a small URL), otherwise
-// falls back to an inline base64 data URL so the app keeps working.
+// Shrinks and re-encodes a photo client-side before it ever reaches Cloudinary or gets
+// stored as base64 — keeps uploads fast and server/DB storage small. Caps the longest
+// edge at maxDim and re-encodes as JPEG at the given quality. Falls back to the original
+// file if decoding fails for any reason (e.g. an unsupported format).
+function compressImage(file, maxDim = 1280, quality = 0.72) {
+  return new Promise(resolve => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale) || img.width;
+      const h = Math.round(img.height * scale) || img.height;
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(blob => resolve(blob ? new File([blob], "photo.jpg", { type: "image/jpeg" }) : file), "image/jpeg", quality);
+    };
+    img.onerror = () => resolve(file);
+    img.src = url;
+  });
+}
+
+// Photo upload: compresses first, then sends to Cloudinary when configured (stores a
+// small URL), otherwise falls back to an inline base64 data URL so the app keeps working.
 async function handlePhoto(e, setPhoto) {
   const f = e.target.files[0];
   if (!f) return;
+  const compressed = await compressImage(f);
   if (isCloudinaryConfigured) {
-    try { setPhoto(await uploadImage(f)); return; } catch (err) { /* fall through to base64 */ }
+    try { setPhoto(await uploadImage(compressed)); return; } catch (err) { /* fall through to base64 */ }
   }
   const r = new FileReader();
   r.onload = ev => setPhoto(ev.target.result);
-  r.readAsDataURL(f);
+  r.readAsDataURL(compressed);
 }
 
 const STYLES = `
@@ -201,6 +226,8 @@ const STYLES = `
   .badge-drawn { background: var(--purple-light); color: var(--purple); }
   .badge-arrived { background: var(--primary-light); color: var(--primary-dark); }
   .badge-completed { background: var(--green-light); color: var(--green); }
+  .badge-replaced { background: var(--green-light); color: var(--green); }
+  .badge-servicing { background: var(--purple-light); color: var(--purple); }
 
   /* LOG / DOC / DAMAGE ITEMS */
   .list-item { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; }
@@ -548,17 +575,20 @@ function buildInvoice(billing, monthISO, by, dealers = []) {
 
 // Installation jobs — admin creates & assigns to an installer company, who accepts
 // and completes them with arrival (geo+time stamped) and completion photos.
-// Job lifecycle: pending (awaiting accept) -> accepted -> drawn (picked up from
-// Dispatch) -> arrived (on-site, unit photographed) -> completed (installed + any
-// unused items returned to Dispatch).
-const JOB_STATUS_LABEL = { pending: "Pending Acceptance", accepted: "Accepted", drawn: "Drawn from Dispatch", arrived: "Arrived On-Site", completed: "Completed" };
+// Job lifecycle: pending (awaiting accept) -> accepted -> drawn (picked up from the
+// appointed warehouse) -> arrived (on-site, unit photographed) -> completed (installed
+// + any unused items returned to the same warehouse they were drawn from).
+const JOB_STATUS_LABEL = { pending: "Pending Acceptance", accepted: "Accepted", drawn: "Drawn", arrived: "Arrived On-Site", completed: "Completed" };
+// Real-world warehouse names, used throughout admin/installer-facing labels.
+const WAREHOUSE_LABEL = { main: "Main Warehouse (Ubi)", dispatch: "Dispatch Warehouse (Senoko)" };
 const seedInstallJobs = [
   { id: 940001, poNo: "PO-123031", doNo: "DO-123031", product: "150mm S-Trap Model One Toilet Bowl", qty: 2,
+    dealer: "", collectWarehouse: "dispatch",
     address: "12 Bishan Street 22, #05-10, Singapore 570012", collectPoint: "Velle Warehouse, 55 Lorong L Telok Kurau",
     date: "05 Jul 2026", dateISO: "2026-07-05", timeFrom: "14:00", timeTo: "17:00",
     installer: "BrightFix Installations", status: "pending", createdBy: "Terence", createdAt: "2026-07-01T09:00:00.000Z",
     notesForInstaller: "Ceiling height unconfirmed — the 150mm and 180mm P-Trap models both fit the rough-in, bring both sizes just in case.",
-    drawnItems: [], drawPhoto: null, drawNotes: "", drawnAt: null,
+    drawnItems: [], drawPhoto: null, extraPhotos: [], drawNotes: "", drawnAt: null,
     arrivalPhoto: null, arrivalMeta: null,
     installedProduct: null, installedQty: null, installedPhoto: null, installedAt: null,
     returnedItems: [], returnPhoto: null, returnedAt: null },
@@ -590,7 +620,7 @@ const SALES_ROLES = ["salesperson", "admin", "superadmin"];
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: "📊", admin: false, roles: SALES_ROLES },
   { id: "daily", label: "Orders", icon: "📝", admin: false, roles: SALES_ROLES },
-  { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false, roles: SALES_ROLES },
+  { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false, roles: [...SALES_ROLES, "installer"] },
   { id: "documents", label: "Documents", icon: "📄", admin: false, roles: SALES_ROLES },
   { id: "tasks", label: "Tasks & Servicing", icon: "🧰", admin: false, roles: SALES_ROLES },
   { id: "claims", label: "Claims", icon: "🧾", admin: false, roles: SALES_ROLES },
@@ -680,10 +710,12 @@ export default function App() {
   const [companySettings, setCompanySettings] = usePersistentState("companySettings", DEFAULT_COMPANY_SETTINGS);
   const [docCounters, setDocCounters] = usePersistentState("docCounters", DEFAULT_DOC_COUNTERS);
   const [installJobs, setInstallJobs] = usePersistentState("installJobs", seedInstallJobs);
+  const [editInstallJob, setEditInstallJob] = useState(null);
   const [targets, setTargets] = usePersistentState("targets", initTargets);
   const [claims, setClaims] = usePersistentState("claims", seedClaims);
   const [supplierPayments, setSupplierPayments] = usePersistentState("supplierPayments", seedSupplierPayments);
   const [invoices, setInvoices] = usePersistentState("invoices", seedInvoices);
+  const [stockIns, setStockIns] = usePersistentState("stockIns", []);
 
   // Keep the PDF generator's company block in sync with SuperAdmin's settings.
   useEffect(() => { setCompanyInfo(companySettings); }, [companySettings]);
@@ -772,11 +804,21 @@ export default function App() {
     setTransfers([{ id: Date.now(), product: p.name, qty: amt, date: todayStr(), dateISO: todayISO(), by: user.name }, ...transfers]);
   };
 
+  // ── STOCK IN (new shipment arriving into Main) ──
+  const receiveStock = (productId, qty, dateISO) => {
+    const p = products.find(x => x.id === productId);
+    if (!p) return;
+    const amt = Number(qty) || 0;
+    if (amt <= 0) return;
+    setProducts(products.map(x => x.id === productId ? { ...x, stockMain: (Number(x.stockMain) || 0) + amt } : x));
+    setStockIns([{ id: Date.now(), product: p.name, qty: amt, date: fmtDate(new Date((dateISO || todayISO()) + "T00:00:00")), dateISO: dateISO || todayISO(), by: user.name }, ...stockIns]);
+  };
+
   // ── INSTALLATION JOBS ──
   const createInstallJob = payload => {
     const job = {
       id: Date.now(), ...allocateDocNumbers(), status: "pending", createdBy: user.name, createdAt: new Date().toISOString(),
-      drawnItems: [], drawPhoto: null, drawNotes: "", drawnAt: null,
+      drawnItems: [], drawPhoto: null, extraPhotos: [], drawNotes: "", drawnAt: null,
       arrivalPhoto: null, arrivalMeta: null,
       installedProduct: null, installedQty: null, installedPhoto: null, installedAt: null,
       returnedItems: [], returnPhoto: null, returnedAt: null,
@@ -785,20 +827,28 @@ export default function App() {
     setInstallJobs([job, ...installJobs]);
     setModal(null);
   };
+  // Admin can amend a job's instructions any time before the installer has drawn stock
+  // against it — after that, product/qty/warehouse are locked in by what's already moved.
+  const updateInstallJob = (jobId, payload) => {
+    setInstallJobs(installJobs.map(j => j.id === jobId ? { ...j, ...payload } : j));
+    setModal(null);
+  };
   const acceptInstallJob = jobId => setInstallJobs(installJobs.map(j => j.id === jobId ? { ...j, status: "accepted", acceptedAt: new Date().toISOString() } : j));
 
-  // Draw from Dispatch: installer picks up one or more models (their own call, beyond
-  // just what was suggested); the photo is already uploaded/resolved by handlePhoto in
-  // the form component before this runs. Deducts each item from Dispatch stock.
-  const drawJobItems = (jobId, items, photoUrl, notes) => {
-    setProducts(products.map(p => {
-      const drawn = items.find(it => it.product === p.name);
-      return drawn ? { ...p, stockDispatch: (Number(p.stockDispatch) || 0) - drawn.qty } : p;
-    }));
-    setInstallJobs(installJobs.map(j => j.id === jobId ? { ...j, status: "drawn", drawnItems: items, drawPhoto: photoUrl, drawNotes: notes || "", drawnAt: new Date().toISOString() } : j));
+  // Draw from the appointed warehouse: the installer may only draw exactly what the job
+  // specifies (product/qty/warehouse are fixed by Admin) — no free entry. The photo(s)
+  // are already uploaded/resolved by handlePhoto in the form component before this runs.
+  // Deducts from Main or Dispatch stock depending on the job's collectWarehouse.
+  const drawJobItems = (jobId, photoUrl, extraPhotos, notes) => {
+    const job = installJobs.find(j => j.id === jobId);
+    if (!job) return;
+    const items = [{ product: job.product, qty: Number(job.qty) || 0 }];
+    const stockField = job.collectWarehouse === "main" ? "stockMain" : "stockDispatch";
+    setProducts(products.map(p => p.name === job.product ? { ...p, [stockField]: (Number(p[stockField]) || 0) - items[0].qty } : p));
+    setInstallJobs(installJobs.map(j => j.id === jobId ? { ...j, status: "drawn", drawnItems: items, drawPhoto: photoUrl, extraPhotos: extraPhotos || [], drawNotes: notes || "", drawnAt: new Date().toISOString() } : j));
   };
   // Arrival photo: captures the unit number, timestamp and (if permitted) GPS location.
-  const captureArrivalJobPhoto = (jobId, file) => {
+  const captureArrivalJobPhoto = async (jobId, file) => {
     const finish = (photoUrl, coords) => setInstallJobs(jobs => jobs.map(j => j.id === jobId ? {
       ...j, status: "arrived", arrivalPhoto: photoUrl,
       arrivalMeta: { takenAt: new Date().toISOString(), lat: coords?.latitude ?? null, lng: coords?.longitude ?? null, accuracy: coords?.accuracy ?? null },
@@ -807,18 +857,21 @@ export default function App() {
       if (navigator.geolocation) navigator.geolocation.getCurrentPosition(pos => finish(photoUrl, pos.coords), () => finish(photoUrl, null), { timeout: 8000, enableHighAccuracy: true });
       else finish(photoUrl, null);
     };
-    if (isCloudinaryConfigured) uploadImage(file).then(withPhoto).catch(() => { const r = new FileReader(); r.onload = ev => withPhoto(ev.target.result); r.readAsDataURL(file); });
-    else { const r = new FileReader(); r.onload = ev => withPhoto(ev.target.result); r.readAsDataURL(file); }
+    const compressed = await compressImage(file);
+    if (isCloudinaryConfigured) uploadImage(compressed).then(withPhoto).catch(() => { const r = new FileReader(); r.onload = ev => withPhoto(ev.target.result); r.readAsDataURL(compressed); });
+    else { const r = new FileReader(); r.onload = ev => withPhoto(ev.target.result); r.readAsDataURL(compressed); }
   };
   // Complete the job: confirm which drawn item (and how many) was actually installed,
-  // work out what's left over, and return that to Dispatch stock. The job's product/
-  // qty/price are overwritten to the installed item so its PO/DO reflect only that —
-  // never the extra items that were drawn "just in case" but not used.
+  // work out what's left over, and return that to the SAME warehouse it was drawn from.
+  // The job's product/qty/price are overwritten to the installed item so its PO/DO
+  // reflect only that — never the extra units that went unused.
   const completeInstallJob = (jobId, installedProduct, installedQty, installedPhotoUrl, returnedItems, returnPhotoUrl) => {
+    const job = installJobs.find(j => j.id === jobId);
+    const stockField = job?.collectWarehouse === "main" ? "stockMain" : "stockDispatch";
     if (returnedItems.length > 0) {
       setProducts(products.map(p => {
         const back = returnedItems.find(it => it.product === p.name);
-        return back ? { ...p, stockDispatch: (Number(p.stockDispatch) || 0) + back.qty } : p;
+        return back ? { ...p, [stockField]: (Number(p[stockField]) || 0) + back.qty } : p;
       }));
     }
     setInstallJobs(installJobs.map(j => {
@@ -845,12 +898,12 @@ export default function App() {
     setLogs(seedLogs); setDamages(seedDamages); setDocs(seedDocs);
     setDealers(initDealers); setProducts(initProducts); setTasks(initTasks);
     setTrash([]); setNotices(initNotices); setInstallJobs(seedInstallJobs); setTargets(initTargets); setClaims(seedClaims);
-    setSupplierPayments(seedSupplierPayments); setInvoices(seedInvoices); setTransfers([]);
+    setSupplierPayments(seedSupplierPayments); setInvoices(seedInvoices); setTransfers([]); setStockIns([]);
   };
   const clearAllData = () => {
     setLogs([]); setDamages([]); setDocs([]); setDealers([]); setProducts([]); setTasks([]);
     setTrash([]); setNotices([]); setInstallJobs([]); setTargets([]); setClaims([]);
-    setSupplierPayments([]); setInvoices([]); setTransfers([]);
+    setSupplierPayments([]); setInvoices([]); setTransfers([]); setStockIns([]);
   };
 
   // ── TRASH ──
@@ -870,6 +923,26 @@ export default function App() {
   const deleteLog = log => { setLogs(logs.filter(l => l !== log)); trashItem("order", log); };
   const deleteDamage = d => { setDamages(damages.filter(x => x !== d)); trashItem("damage", d); };
   const deleteDoc = d => { setDocs(docs.filter(x => x !== d)); trashItem("document", d); };
+
+  // ── DAMAGE REPORT RESOLUTION (salesperson / admin) ──
+  // Send Replacement: dispatches a like-for-like unit straight out of Dispatch stock.
+  const sendReplacement = (id, note) => {
+    const d = damages.find(x => x.id === id);
+    if (!d) return;
+    if (d.product) {
+      setProducts(products.map(p => p.name === d.product ? { ...p, stockDispatch: Math.max(0, (Number(p.stockDispatch) || 0) - (Number(d.qty) || 0)) } : p));
+    }
+    setDamages(damages.map(x => x.id === id ? { ...x, status: "replaced", resolutionNotes: note, resolvedAt: new Date().toISOString(), resolvedBy: user.name } : x));
+  };
+  // Activate Servicing: logs a minimal servicing report (issue/action/photo) against the report.
+  const activateServicing = (id, issue, action, photoUrl) => {
+    setDamages(damages.map(x => x.id === id ? {
+      ...x, status: "servicing",
+      servicing: { issue, action, photo: photoUrl, status: "open", filledBy: user.name, filledAt: new Date().toISOString() },
+    } : x));
+  };
+  const markServicingDone = id => setDamages(damages.map(x => x.id === id ? { ...x, servicing: { ...x.servicing, status: "done" } } : x));
+  const rejectDamage = id => setDamages(damages.map(x => x.id === id ? { ...x, status: "rejected" } : x));
 
   // ── NOTICE BOARD ──
   const postNotice = (title, message) => setNotices([{ id: Date.now(), title, message, by: user.name, date: todayStr(), dateISO: todayISO(), ackBy: [] }, ...notices]);
@@ -934,14 +1007,14 @@ export default function App() {
 
           {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("inventory")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
           {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} />}
-          {page === "damage" && <DamagePage damages={damages} setDamages={setDamages} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} />}
+          {page === "damage" && <DamagePage damages={damages} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} onSendReplacement={sendReplacement} onActivateServicing={activateServicing} onReject={rejectDamage} onMarkServicingDone={markServicingDone} />}
           {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} onDelete={deleteDoc} />}
           {page === "reports" && <ReportsPage logs={logs} />}
           {page === "dealers" && <DealersPage dealers={dealers} setDealers={setDealers} users={users} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} onTrash={trashItem} />}
-          {page === "inventory" && <InventoryPage products={products} setItems={setProducts} transfers={transfers} onTransfer={transferStock} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} onBulkAdd={() => setModal("bulk-products")} logs={logs} />}
+          {page === "inventory" && <InventoryPage products={products} setItems={setProducts} transfers={transfers} onTransfer={transferStock} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} onBulkAdd={() => setModal("bulk-products")} stockIns={stockIns} onReceive={receiveStock} />}
           {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} onTrash={trashItem} />}
           {page === "trash" && <TrashPage trash={trash} me={user.name} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onRestore={restoreTrash} onPermanentDelete={permanentDelete} onEmpty={emptyTrash} />}
-          {page === "install-jobs" && <InstallJobsPage jobs={installJobs} onAdd={() => setModal("install-job")} />}
+          {page === "install-jobs" && <InstallJobsPage jobs={installJobs} onAdd={() => { setEditInstallJob(null); setModal("install-job"); }} onEdit={j => { setEditInstallJob(j); setModal("install-job"); }} />}
           {page === "install-jobs-mine" && <InstallerJobsPage jobs={installJobs} products={products} me={user.name} onAccept={acceptInstallJob} onDraw={drawJobItems} onArrivalPhoto={captureArrivalJobPhoto} onComplete={completeInstallJob} />}
           {page === "targets" && <TargetsPage targets={targets} setTargets={setTargets} users={users} />}
           {page === "claims" && <ClaimsPage claims={claims} setClaims={setClaims} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("claim")} />}
@@ -953,10 +1026,10 @@ export default function App() {
 
       {modal === "log" && <LogModal user={user} dealers={dealers} products={products} onSave={handlePurchase} onClose={() => setModal(null)} />}
       {modal === "order-created" && lastOrder && <OrderCreatedModal order={lastOrder} onClose={() => setModal(null)} />}
-      {modal === "damage" && <DamageModal user={user} onSave={e => { setDamages([{ id: Date.now(), ...e }, ...damages]); setModal(null); }} onClose={() => setModal(null)} />}
+      {modal === "damage" && <DamageModal user={user} products={products} dealers={dealers} onSave={e => { setDamages([{ id: Date.now(), ...e }, ...damages]); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([{ id: Date.now(), ...e }, ...docs]); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "notice" && <NoticeModal onSave={(title, message) => { postNotice(title, message); setModal(null); }} onClose={() => setModal(null)} />}
-      {modal === "install-job" && <InstallJobModal users={users} products={products} onSave={createInstallJob} onClose={() => setModal(null)} />}
+      {modal === "install-job" && <InstallJobModal edit={editInstallJob} users={users} products={products} dealers={dealers} onSave={payload => editInstallJob ? updateInstallJob(editInstallJob.id, payload) : createInstallJob(payload)} onClose={() => setModal(null)} />}
       {modal === "claim" && <ClaimModal user={user} dealers={dealers} onSave={e => { setClaims([{ id: Date.now(), ...e, status: "pending" }, ...claims]); setModal(null); }} onClose={() => setModal(null)} />}
       {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={() => setModal(null)} />}
       {modal === "dealer" && <DealerModal edit={editDealer} dealers={dealers} setDealers={setDealers} users={users} isAdmin={isAdmin} me={user.name} onClose={() => setModal(null)} />}
@@ -1584,15 +1657,20 @@ function LogRow({ log, onDelete }) {
 }
 
 // ── DAMAGE PAGE ───────────────────────────────────────────────────────────────
-function DamagePage({ damages, setDamages, me, isAdmin, onAdd, onDelete }) {
+const DAMAGE_STATUS_LABEL = { pending: "Pending", replaced: "Replacement Sent", servicing: "Servicing", rejected: "Rejected" };
+
+function DamagePage({ damages, dealers, me, isAdmin, onAdd, onDelete, onSendReplacement, onActivateServicing, onReject, onMarkServicingDone }) {
   const [tab, setTab] = useState("mine");
+  const myDealerNames = dealers.filter(d => d.salesperson === me).map(d => d.name);
+  const canReview = isAdmin || myDealerNames.length > 0;
   const list = isAdmin ? damages : damages.filter(d => d.by === me);
+  const reviewList = isAdmin ? damages : damages.filter(d => d.dealer && myDealerNames.includes(d.dealer));
   return (
     <div className="content">
-      {isAdmin && (
+      {canReview && (
         <div className="page-tabs">
-          <button className={`btn btn-sm ${tab === "mine" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("mine")}>All Reports</button>
-          <button className={`btn btn-sm ${tab === "review" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("review")}>Review ({damages.filter(d => d.status === "pending").length})</button>
+          <button className={`btn btn-sm ${tab === "mine" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("mine")}>{isAdmin ? "All Reports" : "My Reports"}</button>
+          <button className={`btn btn-sm ${tab === "review" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("review")}>{isAdmin ? "Review" : "Assigned to Me"} ({reviewList.filter(d => d.status === "pending").length})</button>
         </div>
       )}
       {tab === "mine" && (<>
@@ -1600,8 +1678,8 @@ function DamagePage({ damages, setDamages, me, isAdmin, onAdd, onDelete }) {
         {list.length === 0 ? <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No damage returns filed.</div></div>
           : list.map((d, i) => (
             <div className="list-item" key={d.id ?? i}>
-              <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className={`badge badge-${d.status}`}>{d.status}</span></div>
-              <div className="item-time">{d.date} · by {d.by}</div>
+              <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.product || d.itemDesc}</div><span className={`badge badge-${d.status}`}>{DAMAGE_STATUS_LABEL[d.status] || d.status}</span></div>
+              <div className="item-time">{d.date} · by {d.by}{d.dealer ? ` · ${d.dealer}` : ""}</div>
               {d.qty && <div style={{ fontSize: 13, fontWeight: 500 }}>Qty: {d.qty}</div>}
               {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
               {d.photo && <img src={d.photo} alt="dmg" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)" }} />}
@@ -1609,41 +1687,95 @@ function DamagePage({ damages, setDamages, me, isAdmin, onAdd, onDelete }) {
             </div>
           ))}
       </>)}
-      {tab === "review" && isAdmin && <DamageReviewView damages={damages} setDamages={setDamages} />}
+      {tab === "review" && canReview && <DamageReviewView damages={reviewList} onSendReplacement={onSendReplacement} onActivateServicing={onActivateServicing} onReject={onReject} onMarkServicingDone={onMarkServicingDone} />}
     </div>
   );
 }
 
-function DamageReviewView({ damages, setDamages }) {
-  const update = (i, status) => setDamages(damages.map((d, idx) => idx === i ? { ...d, status } : d));
+function DamageReviewView({ damages, onSendReplacement, onActivateServicing, onReject, onMarkServicingDone }) {
+  const pending = damages.filter(d => d.status === "pending");
+  const resolved = damages.filter(d => d.status !== "pending");
   return (
     <>
-      <div className="section-title">Pending ({damages.filter(d=>d.status==="pending").length})</div>
-      {damages.filter(d=>d.status==="pending").length === 0 && <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No pending damage returns.</div></div>}
-      {damages.map((d, i) => d.status === "pending" && (
-        <div className="list-item" key={i}>
-          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className="badge badge-pending">Pending</span></div>
-          <div className="item-time">{d.date} · by {d.by}</div>
-          {d.qty && <div style={{ fontSize: 13 }}>Qty: {d.qty}</div>}
-          {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
-          {d.photo && <img src={d.photo} alt="dmg" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8 }} />}
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={() => update(i, "reviewed")}>Mark Reviewed</button>
-            <button className="btn btn-danger btn-sm" style={{ flex: 1 }} onClick={() => update(i, "rejected")}>Reject</button>
-          </div>
-        </div>
+      <div className="section-title">Pending ({pending.length})</div>
+      {pending.length === 0 && <div className="empty"><div className="empty-icon">✅</div><div className="empty-lbl">No pending reports.</div></div>}
+      {pending.map(d => (
+        <DamageReviewRow key={d.id} d={d} onSendReplacement={onSendReplacement} onActivateServicing={onActivateServicing} onReject={onReject} />
       ))}
-      {damages.filter(d=>d.status!=="pending").length > 0 && <>
+      {resolved.length > 0 && <>
         <div className="divider" />
-        <div className="section-title">Reviewed</div>
-        {damages.map((d,i) => d.status !== "pending" && (
-          <div className="list-item" key={i}>
-            <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.itemDesc}</div><span className={`badge badge-${d.status}`}>{d.status}</span></div>
-            <div className="item-time">{d.date} · by {d.by}</div>
+        <div className="section-title">Resolved</div>
+        {resolved.map(d => (
+          <div className="list-item" key={d.id}>
+            <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.product || d.itemDesc}</div><span className={`badge badge-${d.status}`}>{DAMAGE_STATUS_LABEL[d.status] || d.status}</span></div>
+            <div className="item-time">{d.date} · by {d.by}{d.dealer ? ` · ${d.dealer}` : ""}</div>
+            {d.resolutionNotes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.resolutionNotes}</div>}
+            {d.servicing && (
+              <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Servicing Report — {d.servicing.status === "done" ? "Done" : "Open"}</div>
+                <div style={{ fontSize: 12, color: "#8A8073" }}>Issue: {d.servicing.issue}</div>
+                <div style={{ fontSize: 12, color: "#8A8073" }}>Action: {d.servicing.action}</div>
+                {d.servicing.photo && <img src={d.servicing.photo} alt="servicing" className="photo-preview" style={{ marginTop: 6 }} />}
+                {d.servicing.status === "open" && <button className="btn btn-green btn-xs" style={{ marginTop: 6 }} onClick={() => onMarkServicingDone(d.id)}>Mark Servicing Done</button>}
+              </div>
+            )}
           </div>
         ))}
       </>}
     </>
+  );
+}
+
+function DamageReviewRow({ d, onSendReplacement, onActivateServicing, onReject }) {
+  const [mode, setMode] = useState("");
+  const [note, setNote] = useState("");
+  const [issue, setIssue] = useState(d.notes || "");
+  const [action, setAction] = useState("");
+  const [photo, setPhoto] = useState(null);
+  const [err, setErr] = useState("");
+  const hp = e => handlePhoto(e, setPhoto);
+  return (
+    <div className="list-item">
+      <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{d.product || d.itemDesc}</div><span className="badge badge-pending">Pending</span></div>
+      <div className="item-time">{d.date} · by {d.by}{d.dealer ? ` · ${d.dealer}` : ""}</div>
+      {d.qty && <div style={{ fontSize: 13 }}>Qty: {d.qty}</div>}
+      {d.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{d.notes}</div>}
+      {d.photo && <img src={d.photo} alt="dmg" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8 }} />}
+
+      {mode === "" && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={() => setMode("replacement")}>Send Replacement</button>
+          <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={() => setMode("servicing")}>Activate Servicing</button>
+          <button className="btn btn-danger btn-sm" style={{ flex: 1 }} onClick={() => onReject(d.id)}>Reject</button>
+        </div>
+      )}
+
+      {mode === "replacement" && (
+        <>
+          <div className="form-group"><div className="field-label">Note (optional)</div><input className="field-input" placeholder="e.g. Replacement unit dispatched via XYZ courier" value={note} onChange={e => setNote(e.target.value)} /></div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={() => onSendReplacement(d.id, note)}>Confirm Replacement</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setMode("")}>Cancel</button>
+          </div>
+        </>
+      )}
+
+      {mode === "servicing" && (
+        <>
+          <div className="form-group"><div className="field-label">Issue</div><input className="field-input" value={issue} onChange={e => setIssue(e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">Action Taken</div><input className="field-input" placeholder="e.g. Technician dispatched to reseal unit" value={action} onChange={e => setAction(e.target.value)} /></div>
+          <div className="photo-zone">
+            <input type="file" accept="image/*" capture="environment" onChange={hp} />
+            {photo ? <img src={photo} alt="servicing" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph (optional)</div></>}
+          </div>
+          {err && <div className="login-err">{err}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={() => { if (!action) { setErr("Enter what action was taken."); return; } onActivateServicing(d.id, issue, action, photo); }}>Confirm Servicing</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setMode("")}>Cancel</button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1785,28 +1917,44 @@ function DocOverviewView({ docs }) {
 }
 
 // ── STOCK ─────────────────────────────────────────────────────────────────────
-function StockCalcView({ logs }) {
-  const [opening, setOpening] = useState(0);
-  const totalSold = logs.reduce((s,l)=>s+Number(l.sold),0);
-  const totalReturned = logs.reduce((s,l)=>s+Number(l.returned),0);
-  const current = Number(opening) - totalSold + totalReturned;
+// Add Stock: records a new shipment arriving into Main Warehouse (Ubi) — pick the
+// product and quantity received, and it's added to the existing count (no need to
+// recalculate the running total by hand). Keeps a dated history of every stock-in.
+function StockInView({ products, stockIns, onReceive }) {
+  const [product, setProduct] = useState("");
+  const [qty, setQty] = useState("");
+  const [dateISO, setDateISO] = useState(todayISO());
+  const submit = () => {
+    if (!product || !qty) return;
+    onReceive(Number(product), qty, dateISO);
+    setQty("");
+  };
   return (
     <>
       <div className="card">
-        <div className="card-title" style={{ marginBottom: 10 }}>Opening Stock</div>
-        <div className="card-sub" style={{ marginBottom: 10 }}>Legacy manual calculator based on daily order logs (delivered/returned). For live per-product stock, see the Warehouses tab.</div>
-        <input className="field-input" type="number" inputMode="numeric" placeholder="Enter opening stock count" value={opening} onChange={e=>setOpening(e.target.value)} />
+        <div className="card-title">Add Stock — Shipment Received</div>
+        <div className="card-sub" style={{ marginBottom: 12 }}>Record new stock arriving into {WAREHOUSE_LABEL.main}. Adds to the existing count — no need to work out the new total yourself.</div>
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">Product</div>
+            <select className="field-select" value={product} onChange={e => setProduct(e.target.value)}>
+              <option value="">Select a product…</option>
+              {products.map(p => <option key={p.id} value={p.id}>{p.name} (Main: {p.stockMain || 0})</option>)}
+            </select>
+          </div>
+          <div className="form-group"><div className="field-label">Quantity Received</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={qty} onChange={e => setQty(e.target.value)} /></div>
+        </div>
+        <div className="form-group"><div className="field-label">Date Received</div><input className="field-input" type="date" value={dateISO} onChange={e => setDateISO(e.target.value)} /></div>
+        <button className="btn btn-primary" onClick={submit} disabled={!product || !qty}>+ Add Stock</button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {[["Opening",Number(opening)||0,"#221E1A"],["Total Delivered",totalSold,"#9A7B4E"],["Returned",totalReturned,"#B5715A"]].map(([l,v,c])=>(
-          <div key={l} className="kpi-card"><div className="kpi-val" style={{ color: c, fontSize: 24 }}>{v}</div><div className="kpi-lbl">{l}</div></div>
+
+      <div className="section-hdr"><div className="section-title">Stock-In History ({stockIns.length})</div></div>
+      {stockIns.length === 0 ? <div className="empty"><div className="empty-icon">📦</div><div className="empty-lbl">No stock received yet.</div></div>
+        : stockIns.map(s => (
+          <div className="list-item" key={s.id}>
+            <div className="item-meta"><div style={{ fontWeight: 700 }}>{s.product}</div><div style={{ fontWeight: 700, color: "#10B981" }}>+{s.qty}</div></div>
+            <div className="item-time">{s.date} · by {s.by}</div>
+          </div>
         ))}
-      </div>
-      <div className="card" style={{ border: `2px solid ${current<0?"var(--red)":"var(--green)"}`, background: current<0?"var(--red-light)":"var(--green-light)" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: current<0?"var(--red)":"var(--green)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Current Stock</div>
-        <div style={{ fontSize: 56, fontWeight: 900, color: current<0?"var(--red)":"var(--green)", textAlign: "center", padding: "12px 0" }}>{current}</div>
-        <div style={{ fontSize: 12, color: "#8A8073", textAlign: "center" }}>Opening − Delivered + Returned</div>
-      </div>
     </>
   );
 }
@@ -1848,18 +1996,18 @@ function UserMgmtPage({ users, setUsers, currentUser, onAdd, onEdit, onTrash }) 
 }
 
 // ── INVENTORY (Warehouses + Products) ─────────────────────────────────────────
-function InventoryPage({ products, setItems, transfers, onTransfer, onAdd, onEdit, onTrash, onBulkAdd, logs }) {
+function InventoryPage({ products, setItems, transfers, onTransfer, onAdd, onEdit, onTrash, onBulkAdd, stockIns, onReceive }) {
   const [tab, setTab] = useState("warehouses");
   return (
     <div className="content">
       <div className="page-tabs">
         <button className={`btn btn-sm ${tab === "warehouses" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("warehouses")}>Warehouses</button>
         <button className={`btn btn-sm ${tab === "products" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("products")}>Products ({products.length})</button>
-        <button className={`btn btn-sm ${tab === "stockcalc" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("stockcalc")}>Stock Calc</button>
+        <button className={`btn btn-sm ${tab === "stockin" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("stockin")}>Stock In</button>
       </div>
       {tab === "warehouses" && <WarehousesView products={products} transfers={transfers} onTransfer={onTransfer} />}
       {tab === "products" && <CatalogPage title="Products" noun="Product" icon="🛁" kind="product" items={products} setItems={setItems} onAdd={onAdd} onEdit={onEdit} onTrash={onTrash} onBulkAdd={onBulkAdd} />}
-      {tab === "stockcalc" && <StockCalcView logs={logs} />}
+      {tab === "stockin" && <StockInView products={products} stockIns={stockIns} onReceive={onReceive} />}
     </div>
   );
 }
@@ -1879,8 +2027,8 @@ function WarehousesView({ products, transfers, onTransfer }) {
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-        <div className="kpi-card"><div className="kpi-val" style={{ color: "#221E1A" }}>{totalMain}</div><div className="kpi-lbl">Main Warehouse (Total)</div></div>
-        <div className="kpi-card"><div className="kpi-val" style={{ color: "#9A7B4E" }}>{totalDispatch}</div><div className="kpi-lbl">Dispatch Warehouse (Total)</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#221E1A" }}>{totalMain}</div><div className="kpi-lbl">{WAREHOUSE_LABEL.main} (Total)</div></div>
+        <div className="kpi-card"><div className="kpi-val" style={{ color: "#9A7B4E" }}>{totalDispatch}</div><div className="kpi-lbl">{WAREHOUSE_LABEL.dispatch} (Total)</div></div>
         <div className="kpi-card"><div className="kpi-val" style={{ color: "#B5715A" }}>{totalMain + totalDispatch}</div><div className="kpi-lbl">Total Inventory</div></div>
       </div>
 
@@ -1902,7 +2050,7 @@ function WarehousesView({ products, transfers, onTransfer }) {
       </div>
 
       <div className="card">
-        <div className="card-title">Transfer Main → Dispatch</div>
+        <div className="card-title">Transfer {WAREHOUSE_LABEL.main} → {WAREHOUSE_LABEL.dispatch}</div>
         <div className="card-sub" style={{ marginBottom: 12 }}>Move stock from Main (bulk/reserve) into Dispatch (ready for sales or installer pickup).</div>
         <div className="input-row-2">
           <div className="form-group"><div className="field-label">Product</div>
@@ -1914,7 +2062,7 @@ function WarehousesView({ products, transfers, onTransfer }) {
           <div className="form-group"><div className="field-label">Quantity</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={xferQty} onChange={e => setXferQty(e.target.value)} /></div>
         </div>
         {selected && Number(xferQty) > Number(selected.stockMain || 0) && (
-          <div className="login-err">Only {selected.stockMain || 0} available in Main warehouse.</div>
+          <div className="login-err">Only {selected.stockMain || 0} available in {WAREHOUSE_LABEL.main}.</div>
         )}
         <button className="btn btn-primary" onClick={doTransfer} disabled={!xferProduct || !xferQty}>Transfer to Dispatch</button>
       </div>
@@ -2249,7 +2397,7 @@ function TrashPage({ trash, me, isAdmin, isSuperAdmin, onRestore, onPermanentDel
 }
 
 // ── INSTALLATION JOBS ──────────────────────────────────────────────────────────
-function InstallJobsPage({ jobs, onAdd }) {
+function InstallJobsPage({ jobs, onAdd, onEdit }) {
   return (
     <div className="content">
       <div className="section-hdr"><div className="section-title">Installation Jobs ({jobs.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Job</button></div>
@@ -2260,18 +2408,26 @@ function InstallJobsPage({ jobs, onAdd }) {
               <div><div style={{ fontSize: 14, fontWeight: 700 }}>{j.product}</div><div style={{ fontSize: 11, color: "#8A8073" }}>Qty {j.qty} · {j.poNo} / {j.doNo}</div></div>
               <span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span>
             </div>
+            {j.dealer && <div style={{ fontSize: 12, color: "#8A8073" }}>🤝 Dealer: {j.dealer}</div>}
+            <div style={{ fontSize: 12, color: "#8A8073" }}>🏬 Collect from: {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
             <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {j.address}</div>
             <div style={{ fontSize: 12, color: "#8A8073" }}>📦 Collect: {j.collectPoint || "—"}</div>
             <div style={{ fontSize: 12, color: "#8A8073" }}>🗓 {j.date} · {fmt12h(j.timeFrom)}–{fmt12h(j.timeTo)}</div>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#9A7B4E" }}>Installer: {j.installer}</div>
             {j.notesForInstaller && <div style={{ fontSize: 12, color: "#8A8073", fontStyle: "italic" }}>Note: {j.notesForInstaller}</div>}
+            {["pending", "accepted"].includes(j.status) && <button className="btn btn-ghost btn-xs" style={{ alignSelf: "flex-start" }} onClick={() => onEdit(j)}>✎ Edit Job</button>}
 
             {j.drawnItems && j.drawnItems.length > 0 && (
               <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Drawn from Dispatch</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Drawn from {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
                 {j.drawnItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
                 {j.drawNotes && <div style={{ fontSize: 11, color: "#8A8073", fontStyle: "italic", marginTop: 4 }}>"{j.drawNotes}"</div>}
                 {j.drawPhoto && <img src={j.drawPhoto} alt="drawn items" className="photo-preview" style={{ marginTop: 6 }} />}
+                {j.extraPhotos && j.extraPhotos.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                    {j.extraPhotos.map((p, i) => <img key={i} src={p} alt="extra" className="photo-preview" style={{ width: 70, height: 70 }} />)}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2295,7 +2451,7 @@ function InstallJobsPage({ jobs, onAdd }) {
 
             {j.returnedItems && j.returnedItems.length > 0 && (
               <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Returned to Dispatch</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Returned to {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
                 {j.returnedItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
                 {j.returnPhoto && <img src={j.returnPhoto} alt="returned items" className="photo-preview" style={{ marginTop: 6 }} />}
               </div>
@@ -2306,32 +2462,50 @@ function InstallJobsPage({ jobs, onAdd }) {
   );
 }
 
-function InstallJobModal({ users, products, onSave, onClose }) {
+function InstallJobModal({ edit, users, products, dealers, onSave, onClose }) {
   const installers = users.filter(u => u.role === "installer");
-  const [product, setProduct] = useState("");
-  const [qty, setQty] = useState("");
-  const [address, setAddress] = useState("");
-  const [collectPoint, setCollectPoint] = useState("");
-  const [dateISO, setDateISO] = useState(todayISO());
-  const [timeFrom, setTimeFrom] = useState("");
-  const [timeTo, setTimeTo] = useState("");
-  const [installer, setInstaller] = useState("");
-  const [notesForInstaller, setNotesForInstaller] = useState("");
+  const [product, setProduct] = useState(edit?.product || "");
+  const [qty, setQty] = useState(edit ? String(edit.qty) : "");
+  const [dealer, setDealer] = useState(edit?.dealer || "");
+  const [collectWarehouse, setCollectWarehouse] = useState(edit?.collectWarehouse || "dispatch");
+  const [address, setAddress] = useState(edit?.address || "");
+  const [collectPoint, setCollectPoint] = useState(edit?.collectPoint || "");
+  const [dateISO, setDateISO] = useState(edit?.dateISO || todayISO());
+  const [timeFrom, setTimeFrom] = useState(edit?.timeFrom || "");
+  const [timeTo, setTimeTo] = useState(edit?.timeTo || "");
+  const [installer, setInstaller] = useState(edit?.installer || "");
+  const [notesForInstaller, setNotesForInstaller] = useState(edit?.notesForInstaller || "");
   const [err, setErr] = useState("");
+  const stockField = collectWarehouse === "main" ? "stockMain" : "stockDispatch";
   const save = () => {
     if (!product || !qty || !address || !dateISO || !timeFrom || !timeTo || !installer) { setErr("Please fill in every field."); return; }
-    onSave({ product, qty: Number(qty) || 0, address, collectPoint, date: fmtDate(new Date(dateISO + "T00:00:00")), dateISO, timeFrom, timeTo, installer, notesForInstaller });
+    onSave({ product, qty: Number(qty) || 0, dealer, collectWarehouse, address, collectPoint, date: fmtDate(new Date(dateISO + "T00:00:00")), dateISO, timeFrom, timeTo, installer, notesForInstaller });
   };
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
-      <div className="modal-handle" /><div className="modal-title">New Installation Job</div>
+      <div className="modal-handle" /><div className="modal-title">{edit ? "Edit Installation Job" : "New Installation Job"}</div>
       <div className="form-group"><div className="field-label">Product to Install</div>
         <select className="field-select" value={product} onChange={e => setProduct(e.target.value)}>
           <option value="">Select a product…</option>
-          {products.map(p => <option key={p.id} value={p.name}>{p.name} (Dispatch: {p.stockDispatch || 0})</option>)}
+          {products.map(p => <option key={p.id} value={p.name}>{p.name} ({WAREHOUSE_LABEL[collectWarehouse]}: {p[stockField] || 0})</option>)}
         </select>
       </div>
-      <div className="form-group"><div className="field-label">Quantity</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={qty} onChange={e => setQty(e.target.value)} /></div>
+      <div className="input-row-2">
+        <div className="form-group"><div className="field-label">Quantity</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={qty} onChange={e => setQty(e.target.value)} /></div>
+        <div className="form-group"><div className="field-label">Collect From</div>
+          <select className="field-select" value={collectWarehouse} onChange={e => setCollectWarehouse(e.target.value)}>
+            <option value="dispatch">{WAREHOUSE_LABEL.dispatch}</option>
+            <option value="main">{WAREHOUSE_LABEL.main}</option>
+          </select>
+        </div>
+      </div>
+      <div className="form-group"><div className="field-label">Dealer (optional)</div>
+        <select className="field-select" value={dealer} onChange={e => setDealer(e.target.value)}>
+          <option value="">Not tied to a dealer</option>
+          {dealers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+        </select>
+        <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>Not shown on the PO/DO — used later to consolidate billing and to route any damage reports to the right salesperson.</div>
+      </div>
       <div className="form-group"><div className="field-label">Jobsite Address</div><input className="field-input" placeholder="Full installation address" value={address} onChange={e => setAddress(e.target.value)} /></div>
       <div className="form-group"><div className="field-label">Collection Point</div><input className="field-input" placeholder="Where to collect the goods (e.g. warehouse)" value={collectPoint} onChange={e => setCollectPoint(e.target.value)} /></div>
       <div className="input-row-3">
@@ -2347,59 +2521,64 @@ function InstallJobModal({ users, products, onSave, onClose }) {
         {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installer accounts yet — add one in User Management first.</div>}
       </div>
       <div className="form-group"><div className="field-label">Notes for Installer (optional)</div>
-        <input className="field-input" placeholder="e.g. Bring both sizes, ceiling height unconfirmed" value={notesForInstaller} onChange={e => setNotesForInstaller(e.target.value)} />
+        <input className="field-input" placeholder="e.g. Recommend the 150mm size based on the rough-in photo" value={notesForInstaller} onChange={e => setNotesForInstaller(e.target.value)} />
       </div>
       {err && <div className="login-err">{err}</div>}
-      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Create Job — Generate PO/DO</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>{edit ? "Save Changes" : "Create Job — Generate PO/DO"}</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
     </div></div>
   );
 }
 
-// Installer's "Draw from Dispatch" step: freely pick any number of models/quantities
-// (pre-seeded with the job's planned product as a starting row), constrained by what's
-// actually available in Dispatch right now, plus one photo as proof of what was taken.
-function DrawItemsForm({ job, products, onDraw }) {
-  const [rows, setRows] = useState([{ product: job.product, qty: String(job.qty || 1) }]);
+// Installer's "Draw" step: strictly locked to what Admin instructed on the job (product,
+// qty, warehouse) — no free entry. If more/different stock is needed, the installer must
+// ask Admin to edit the job. Requires one collection photo, plus optional extra photos
+// (of the stock drawn, or any issue faced) kept purely as a record.
+function DrawConfirmForm({ job, products, onDraw }) {
   const [notes, setNotes] = useState("");
   const [photo, setPhoto] = useState(null);
+  const [extraPhotos, setExtraPhotos] = useState([]);
   const [err, setErr] = useState("");
   const hp = e => handlePhoto(e, setPhoto);
-  const setRow = (i, field, val) => setRows(rows.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
-  const addRow = () => setRows([...rows, { product: "", qty: "1" }]);
-  const removeRow = i => setRows(rows.filter((_, idx) => idx !== i));
-  const availFor = name => products.find(p => p.name === name)?.stockDispatch || 0;
+  const addExtraPhoto = e => handlePhoto(e, url => setExtraPhotos(prev => [...prev, url]));
+  const removeExtraPhoto = i => setExtraPhotos(extraPhotos.filter((_, idx) => idx !== i));
+  const warehouse = job.collectWarehouse || "dispatch";
+  const stockField = warehouse === "main" ? "stockMain" : "stockDispatch";
+  const avail = products.find(p => p.name === job.product)?.[stockField] || 0;
   const confirm = () => {
-    const items = rows.filter(r => r.product && Number(r.qty) > 0).map(r => ({ product: r.product, qty: Number(r.qty) }));
-    if (items.length === 0) { setErr("Add at least one product and quantity."); return; }
-    const over = items.find(it => it.qty > availFor(it.product));
-    if (over) { setErr(`Only ${availFor(over.product)} of "${over.product}" available in Dispatch.`); return; }
+    if (Number(job.qty) > avail) { setErr(`Only ${avail} of "${job.product}" available in ${WAREHOUSE_LABEL[warehouse]} — ask Admin to adjust the job.`); return; }
     if (!photo) { setErr("Please photograph the items being drawn."); return; }
-    onDraw(job.id, items, photo, notes);
+    onDraw(job.id, photo, extraPhotos, notes);
   };
   return (
     <>
-      <div className="field-label" style={{ marginTop: 4 }}>Step 1 — Draw from Dispatch Warehouse</div>
+      <div className="field-label" style={{ marginTop: 4 }}>Step 1 — Draw from {WAREHOUSE_LABEL[warehouse]}</div>
       {job.notesForInstaller && <div style={{ fontSize: 12, color: "#8A8073", fontStyle: "italic", background: "var(--bg)", borderRadius: 8, padding: "8px 10px" }}>Admin note: "{job.notesForInstaller}"</div>}
-      {rows.map((r, i) => (
-        <div key={i} className="input-row-2" style={{ alignItems: "end" }}>
-          <div className="form-group"><div className="field-label">Product</div>
-            <select className="field-select" value={r.product} onChange={e => setRow(i, "product", e.target.value)}>
-              <option value="">Select a product…</option>
-              {products.map(p => <option key={p.id} value={p.name}>{p.name} (Dispatch: {p.stockDispatch || 0})</option>)}
-            </select>
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input className="field-input" type="number" inputMode="numeric" placeholder="Qty" value={r.qty} onChange={e => setRow(i, "qty", e.target.value)} />
-            {rows.length > 1 && <button className="btn btn-danger btn-xs" onClick={() => removeRow(i)}>✕</button>}
-          </div>
-        </div>
-      ))}
-      <button className="btn btn-ghost btn-xs" style={{ alignSelf: "flex-start" }} onClick={addRow}>+ Add another model</button>
-      <div className="form-group"><div className="field-label">Notes (optional — why extra items, if any)</div><input className="field-input" placeholder="e.g. Bringing a spare in case of size mismatch" value={notes} onChange={e => setNotes(e.target.value)} /></div>
+      <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Draw exactly as instructed</div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{job.qty} × {job.product}</div>
+        <div style={{ fontSize: 11, color: "#8A8073" }}>{WAREHOUSE_LABEL[warehouse]} — {avail} available</div>
+        <div style={{ fontSize: 11, color: "#8A8073", fontStyle: "italic", marginTop: 4 }}>Need something different? Ask Admin to edit this job first.</div>
+      </div>
       <div className="photo-zone">
         <input type="file" accept="image/*" capture="environment" onChange={hp} />
         {photo ? <img src={photo} alt="drawn" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph what's being drawn</div></>}
       </div>
+      <div className="field-label">Extra Photos (optional — stock drawn or any issue faced)</div>
+      {extraPhotos.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {extraPhotos.map((p, i) => (
+            <div key={i} style={{ position: "relative" }}>
+              <img src={p} alt="extra" className="photo-preview" style={{ width: 70, height: 70 }} />
+              <button className="btn btn-danger btn-xs" style={{ position: "absolute", top: -6, right: -6, padding: "0 6px" }} onClick={() => removeExtraPhoto(i)}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="photo-zone">
+        <input type="file" accept="image/*" capture="environment" onChange={addExtraPhoto} />
+        <div className="photo-icon">📷</div><div className="photo-lbl">Tap to add another photo</div>
+      </div>
+      <div className="form-group"><div className="field-label">Notes (optional)</div><input className="field-input" placeholder="e.g. Site condition or anything worth flagging" value={notes} onChange={e => setNotes(e.target.value)} /></div>
       {err && <div className="login-err">{err}</div>}
       <button className="btn btn-primary btn-sm" onClick={confirm}>Confirm Draw</button>
     </>
@@ -2444,7 +2623,7 @@ function CompleteInstallForm({ job, onComplete }) {
       {returned.length > 0 && (
         <>
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Will return to Dispatch:</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Will return to {WAREHOUSE_LABEL[job.collectWarehouse || "dispatch"]}:</div>
             {returned.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
           </div>
           <div className="field-label">Return Photo</div>
@@ -2482,19 +2661,25 @@ function InstallerJobsPage({ jobs, products, me, onAccept, onDraw, onArrivalPhot
       {active.map(j => (
         <div className="list-item" key={j.id}>
           <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.product}</div><span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span></div>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>Suggested: {j.qty} × {j.product}</div>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>To draw: {j.qty} × {j.product}</div>
+          {j.dealer && <div style={{ fontSize: 12, color: "#8A8073" }}>🤝 Dealer: {j.dealer}</div>}
           <div style={{ fontSize: 12, color: "#8A8073" }}>📍 Jobsite: {j.address}</div>
           <div style={{ fontSize: 12, color: "#8A8073" }}>📦 Collect goods: {j.collectPoint || "—"}</div>
           <div style={{ fontSize: 12, color: "#8A8073" }}>🗓 {j.date} · {fmt12h(j.timeFrom)}–{fmt12h(j.timeTo)}</div>
           <div style={{ fontSize: 11, color: "#8A8073" }}>{j.poNo} · {j.doNo}</div>
 
-          {j.status === "accepted" && <DrawItemsForm job={j} products={products} onDraw={onDraw} />}
+          {j.status === "accepted" && <DrawConfirmForm job={j} products={products} onDraw={onDraw} />}
 
           {j.status === "drawn" && (
             <>
               <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Drawn from Dispatch</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Drawn from {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
                 {j.drawnItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
+                {j.extraPhotos && j.extraPhotos.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                    {j.extraPhotos.map((p, i) => <img key={i} src={p} alt="extra" className="photo-preview" style={{ width: 70, height: 70 }} />)}
+                  </div>
+                )}
               </div>
               <div className="field-label" style={{ marginTop: 4 }}>Step 2 — Arrival photo (unit number)</div>
               <div className="photo-zone">
@@ -3157,19 +3342,36 @@ function OrderCreatedModal({ order, onClose }) {
   );
 }
 
-function DamageModal({ user, onSave, onClose }) {
-  const [itemDesc,setItemDesc]=useState(""); const [qty,setQty]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
+function DamageModal({ user, products, dealers, onSave, onClose }) {
+  const [product,setProduct]=useState(""); const [dealer,setDealer]=useState(""); const [qty,setQty]=useState(""); const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
+  const [err,setErr]=useState("");
   const hp=e=>handlePhoto(e,setPhoto);
-  const save=()=>{if(!itemDesc)return;onSave({itemDesc,qty,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO(),status:"pending"});};
+  const save=()=>{
+    if(!product){setErr("Please select the product.");return;}
+    if(!photo){setErr("Please attach a photo of the issue.");return;}
+    onSave({product,dealer,qty,notes,photo,by:user.name,date:todayStr(),dateISO:todayISO(),status:"pending"});
+  };
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
-      <div className="modal-handle"/><div className="modal-title">Report Damage Return</div>
-      <div className="form-group"><div className="field-label">Item Description</div><input className="field-input" placeholder="Describe the damaged item" value={itemDesc} onChange={e=>setItemDesc(e.target.value)}/></div>
-      <div className="form-group"><div className="field-label">Quantity</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={qty} onChange={e=>setQty(e.target.value)}/></div>
-      <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="Describe the damage..." value={notes} onChange={e=>setNotes(e.target.value)}/></div>
-      <div className="form-group"><div className="field-label">Photo of Damage</div>
-        <div className="photo-zone"><input type="file" accept="image/*" capture="environment" onChange={hp}/>{photo?<img src={photo} alt="p" className="photo-preview"/>:<><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the damage</div></>}</div>
+      <div className="modal-handle"/><div className="modal-title">Report Damaged Product</div>
+      <div className="form-group"><div className="field-label">Product</div>
+        <select className="field-select" value={product} onChange={e=>setProduct(e.target.value)}>
+          <option value="">Select a product…</option>
+          {products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+        </select>
       </div>
+      <div className="form-group"><div className="field-label">Dealer (optional)</div>
+        <select className="field-select" value={dealer} onChange={e=>setDealer(e.target.value)}>
+          <option value="">Not tied to a dealer</option>
+          {dealers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+        </select>
+      </div>
+      <div className="form-group"><div className="field-label">Quantity</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={qty} onChange={e=>setQty(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Issue</div><input className="field-input" placeholder="Describe the damage / issue..." value={notes} onChange={e=>setNotes(e.target.value)}/></div>
+      <div className="form-group"><div className="field-label">Photo</div>
+        <div className="photo-zone"><input type="file" accept="image/*" capture="environment" onChange={hp}/>{photo?<img src={photo} alt="p" className="photo-preview"/>:<><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the issue</div></>}</div>
+      </div>
+      {err && <div className="login-err">{err}</div>}
       <div className="modal-actions"><button className="btn btn-primary" style={{flex:1}} onClick={save}>Submit Report</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
     </div></div>
   );
