@@ -2,17 +2,42 @@ rules_version = '2';
 
 // Velle Inventory Management — Firestore security rules.
 // Paste these into Firebase Console → Firestore Database → Rules → Publish.
-// Requires Anonymous sign-in to be enabled (Authentication → Sign-in method → Anonymous).
+//
+// Requires Email/Password sign-in to be enabled (Authentication → Sign-in
+// method → Email/Password). Anonymous sign-in should be DISABLED there too —
+// the app no longer uses it, and every real staff PIN now maps to its own
+// Firebase Auth account instead of everyone sharing one free anonymous
+// session. These rules also reject anonymous tokens defensively in case
+// Anonymous sign-in is ever left enabled by mistake.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // All app data lives under appState/<collection>. Allow only signed-in
-    // (anonymous) app sessions, and restrict payload to a single "items" array.
-    match /appState/{docId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null
+    // A genuine, non-anonymous signed-in staff session.
+    function isSignedIn() {
+      return request.auth != null
+             && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    // All app data lives under appState/<collection>, one document per
+    // collection holding a single "items" array.
+    //
+    // appState/users (the staff roster: name, role, PIN) stays readable
+    // without sign-in, same as before — the login screen has to check a PIN
+    // against it before any session exists. Writing it (adding/editing staff)
+    // still requires a real signed-in session.
+    match /appState/users {
+      allow read: if true;
+      allow write: if isSignedIn()
                    && request.resource.data.keys().hasOnly(['items'])
                    && request.resource.data.items is list;
+    }
+
+    // Everything else under appState/* requires a real signed-in session for
+    // both read and write.
+    match /appState/{docId} {
+      allow read, write: if isSignedIn()
+                          && request.resource.data.keys().hasOnly(['items'])
+                          && request.resource.data.items is list;
     }
 
     // Everything else is denied.
