@@ -534,12 +534,6 @@ const PRESET_BULK_PRODUCTS = [
   '2" Offset Pan Collar 32 + 4pcs Package',
 ];
 
-// Daily tasks / servicing jobs.
-const initTasks = [
-  { id: 1, title: "Service leaking basin mixer", type: "Servicing", details: "Site: ABC Construction, Blk 12", date: "01 Jul 2026", dateISO: "2026-07-01", by: "Admin", status: "open" },
-  { id: 2, title: "Deliver 5 One-Piece WC to Summit", type: "Task", details: "", date: "01 Jul 2026", dateISO: "2026-07-01", by: "Admin", status: "open" },
-];
-
 // Per-salesperson targets, set by Admin: new dealers to approach each week, and a monthly sales dollar target.
 const initTargets = [
   { id: 1, salesperson: "Ali", newDealerWeekly: 2, salesMonthly: 15000 },
@@ -690,7 +684,6 @@ const NAV = [
   { id: "daily", label: "Orders", icon: "📝", admin: false, roles: SALES_ROLES },
   { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false, roles: [...SALES_ROLES, "installer"] },
   { id: "documents", label: "Documents", icon: "📄", admin: false, roles: SALES_ROLES },
-  { id: "tasks", label: "Tasks & Servicing", icon: "🧰", admin: false, roles: SALES_ROLES },
   { id: "claims", label: "Claims", icon: "🧾", admin: false, roles: [...SALES_ROLES, "installer"] },
   { id: "install-jobs-mine", label: "My Jobs", icon: "🛠️", admin: false, roles: ["installer"] },
   { id: "trash", label: "Trash", icon: "🗑️", admin: false },
@@ -698,6 +691,7 @@ const NAV = [
   { id: "dealers", label: "Dealers", icon: "🤝", admin: true },
   { id: "installers", label: "Installers", icon: "👷", admin: true },
   { id: "inventory", label: "Inventory", icon: "🏬", admin: true },
+  { id: "servicing", label: "Servicing", icon: "🧰", admin: true },
   { id: "targets", label: "Sales Targets", icon: "🎯", admin: true },
   { id: "finance", label: "Finance", icon: "💰", admin: true },
   { id: "users", label: "User Management", icon: "👥", admin: true },
@@ -773,8 +767,7 @@ export default function App() {
   const [transfers, setTransfers] = usePersistentState("transfers", []);
   const [editDealer, setEditDealer] = useState(null);
   const [editProduct, setEditProduct] = useState(null);
-  const [tasks, setTasks] = usePersistentState("tasks", initTasks);
-  const [editTask, setEditTask] = useState(null);
+  const [servicingProject, setServicingProject] = useState(null);
   const [lastOrder, setLastOrder] = useState(null);
   const [editOrderLog, setEditOrderLog] = useState(null);
   const [trash, setTrash] = usePersistentState("trash", []);
@@ -938,6 +931,16 @@ export default function App() {
     setModal(null);
   };
 
+  // ── SERVICING ──
+  // A servicing job is just another installJobs entry — same accept/draw/arrive/complete
+  // lifecycle as an installation — tagged type:"servicing" and anchored to the original
+  // project via projectId, and sharing the project's PO/DO since it's the same site.
+  const createServicingJob = (project, payload) => {
+    const job = blankInstallJob({ ...payload, type: "servicing", projectId: project.id, poNo: project.poNo, doNo: project.doNo, dealer: project.dealer });
+    setInstallJobs([job, ...installJobs]);
+    setModal(null);
+  };
+
   // ── WAREHOUSE TRANSFER (Main → Dispatch) ──
   const transferStock = (productId, qty) => {
     const p = products.find(x => x.id === productId);
@@ -965,7 +968,15 @@ export default function App() {
     setInstallJobs(installJobs.map(j => j.id === jobId ? { ...j, ...payload } : j));
     setModal(null);
   };
-  const acceptInstallJob = jobId => setInstallJobs(installJobs.map(j => j.id === jobId ? { ...j, status: "accepted", acceptedAt: new Date().toISOString() } : j));
+  // NIL-product servicing jobs (a site visit with nothing to draw from the warehouse)
+  // skip straight to "drawn" on acceptance so the installer lands on the arrival step —
+  // there's no stock to collect.
+  const acceptInstallJob = jobId => setInstallJobs(installJobs.map(j => {
+    if (j.id !== jobId) return j;
+    const now = new Date().toISOString();
+    if (j.product === "NIL") return { ...j, status: "drawn", acceptedAt: now, drawnItems: [], drawnAt: now };
+    return { ...j, status: "accepted", acceptedAt: now };
+  }));
 
   // Draw from the appointed warehouse: the installer may only draw exactly what the job
   // specifies (product/qty/warehouse are fixed by Admin) — no free entry. The photo(s)
@@ -1000,7 +1011,7 @@ export default function App() {
   // The job's product/qty/price are overwritten to the installed item so its PO/DO
   // reflect only that — never the extra units that went unused. Photos are optional
   // throughout — completion isn't blocked on having taken one.
-  const completeInstallJob = (jobId, installedProduct, installedQty, installedPhotoUrl, returnedItems, returnPhotoUrl) => {
+  const completeInstallJob = (jobId, installedProduct, installedQty, installedPhotoUrl, returnedItems, returnPhotoUrl, completionNotes) => {
     const job = installJobs.find(j => j.id === jobId);
     const stockField = job?.collectWarehouse === "main" ? "stockMain" : "stockDispatch";
     if (returnedItems.length > 0) {
@@ -1009,31 +1020,37 @@ export default function App() {
         return back ? { ...p, [stockField]: (Number(p[stockField]) || 0) + back.qty } : p;
       }));
     }
-    const installedPrice = products.find(p => p.name === installedProduct)?.price || 0;
+    const installedPrice = installedProduct === "NIL" ? 0 : (products.find(p => p.name === installedProduct)?.price || 0);
     setInstallJobs(installJobs.map(j => {
       if (j.id !== jobId) return j;
       return {
         ...j, status: "completed",
         product: installedProduct, qty: installedQty, price: installedPrice,
         installedProduct, installedQty, installedPhoto: installedPhotoUrl, installedAt: new Date().toISOString(),
-        returnedItems, returnPhoto: returnPhotoUrl, returnedAt: new Date().toISOString(),
+        returnedItems, returnPhoto: returnPhotoUrl, returnedAt: new Date().toISOString(), completionNotes: completionNotes || "",
       };
     }));
     // Notify Admin and the relevant salesperson (via the shared Notice Board) that this
-    // installation is done — installers don't see the Dashboard, so this reaches exactly
-    // the people who need to know.
+    // job is done — installers don't see the Dashboard, so this reaches exactly the
+    // people who need to know.
     if (job) {
+      const isServicing = job.type === "servicing";
+      const label = isServicing ? "Servicing" : "Installation";
+      const what = installedProduct === "NIL" ? (completionNotes || "issue resolved") : `${installedQty} × ${installedProduct}`;
       setNotices([{
         id: Date.now(),
-        title: `Installation completed — ${installedProduct}`,
-        message: `${job.installer} completed ${installedQty} × ${installedProduct} at ${job.address}${job.dealer ? ` (${job.dealer})` : ""}. ${job.poNo} · ${job.doNo}.`,
+        title: `${label} completed — ${installedProduct === "NIL" ? job.address : installedProduct}`,
+        message: `${job.installer} completed ${label.toLowerCase()} (${what}) at ${job.address}${job.dealer ? ` (${job.dealer})` : ""}. ${job.poNo} · ${job.doNo}.`,
         by: job.installer, date: todayStr(), dateISO: todayISO(), ackBy: [],
       }, ...notices]);
       // Bill for the completed job straight away — to its dealer if it has one,
       // otherwise to the jobsite address — rather than waiting on the monthly cycle,
       // which only ever picks up dealer sales orders, not installer job completions.
-      const invoice = buildJobInvoice({ ...job, installedProduct, installedQty, price: installedPrice }, job.installer, dealers);
-      setInvoices([invoice, ...invoices]);
+      // Skipped for NIL-product servicing visits (no charge, nothing to bill).
+      if (installedProduct !== "NIL") {
+        const invoice = buildJobInvoice({ ...job, installedProduct, installedQty, price: installedPrice }, job.installer, dealers);
+        setInvoices([invoice, ...invoices]);
+      }
     }
   };
 
@@ -1047,12 +1064,12 @@ export default function App() {
   const loadTestData = () => {
     setUsers(initUsers);
     setLogs(seedLogs); setDamages(seedDamages); setDocs(seedDocs);
-    setDealers(initDealers); setInstallers([]); setProducts(initProducts); setTasks(initTasks);
+    setDealers(initDealers); setInstallers([]); setProducts(initProducts);
     setTrash([]); setNotices(initNotices); setInstallJobs(seedInstallJobs); setTargets(initTargets); setClaims(seedClaims);
     setSupplierPayments(seedSupplierPayments); setInvoices(seedInvoices); setTransfers([]); setStockIns([]);
   };
   const clearAllData = () => {
-    setLogs([]); setDamages([]); setDocs([]); setDealers([]); setInstallers([]); setProducts([]); setTasks([]);
+    setLogs([]); setDamages([]); setDocs([]); setDealers([]); setInstallers([]); setProducts([]);
     setTrash([]); setNotices([]); setInstallJobs([]); setTargets([]); setClaims([]);
     setSupplierPayments([]); setInvoices([]); setTransfers([]); setStockIns([]);
   };
@@ -1061,7 +1078,7 @@ export default function App() {
   // Deleting anywhere in the app routes here instead of removing outright:
   // the item moves to Trash (kept 90 days), tagged with who deleted it.
   const trashItem = (kind, item) => setTrash([{ trashId: Date.now() + Math.random(), kind, item, by: user.name, deletedAt: new Date().toISOString() }, ...trash]);
-  const collections = { order: [logs, setLogs], damage: [damages, setDamages], document: [docs, setDocs], dealer: [dealers, setDealers], installer: [installers, setInstallers], product: [products, setProducts], task: [tasks, setTasks], user: [users, setUsers] };
+  const collections = { order: [logs, setLogs], damage: [damages, setDamages], document: [docs, setDocs], dealer: [dealers, setDealers], installer: [installers, setInstallers], product: [products, setProducts], user: [users, setUsers] };
   const restoreTrash = trashId => {
     const t = trash.find(x => x.trashId === trashId);
     if (!t) return;
@@ -1211,13 +1228,13 @@ export default function App() {
           {page === "dealers" && <DealersPage dealers={dealers} setDealers={setDealers} users={users} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} onTrash={trashItem} />}
           {page === "installers" && <InstallersPage installers={installers} onAdd={() => { setEditInstaller(null); setModal("installer"); }} onEdit={i => { setEditInstaller(i); setModal("installer"); }} onTrash={trashItem} setInstallers={setInstallers} />}
           {page === "inventory" && <InventoryPage products={products} setItems={setProducts} transfers={transfers} onTransfer={transferStock} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} onBulkAdd={() => setModal("bulk-products")} stockIns={stockIns} onReceive={receiveStock} />}
-          {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} onTrash={trashItem} />}
+          {page === "servicing" && <ServicingPage jobs={installJobs} invoices={invoices} onDispatch={project => { setServicingProject(project); setModal("servicing"); }} />}
           {page === "trash" && <TrashPage trash={trash} me={user.name} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onRestore={restoreTrash} onPermanentDelete={permanentDelete} onEmpty={emptyTrash} />}
           {page === "install-jobs-mine" && <InstallerJobsPage jobs={installJobs} products={products} me={user.name} onAccept={acceptInstallJob} onDraw={drawJobItems} onArrivalPhoto={captureArrivalJobPhoto} onComplete={completeInstallJob} />}
           {page === "targets" && <TargetsPage targets={targets} setTargets={setTargets} users={users} />}
           {page === "claims" && <ClaimsPage claims={claims} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("claim")} onApprove={id => updateClaimStatus(id, "approved")} onReject={id => updateClaimStatus(id, "rejected")} onMarkPaid={markClaimPaid} />}
           {page === "finance" && <FinancePage logs={logs} claims={claims} invoices={invoices} supplierPayments={supplierPayments} onGenerateInvoice={generateInvoice} onMarkPaid={markInvoicePaid} onMarkSent={markInvoiceSent} onAddSupplierPayment={addSupplierPayment} />}
-          {page === "settings" && isSuperAdmin && <SettingsPage settings={companySettings} setSettings={setCompanySettings} counters={docCounters} setCounters={setDocCounters} invoices={invoices} supplierPayments={supplierPayments} claims={claims} logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} trash={trash} notices={notices} onLoad={loadTestData} onClear={clearAllData} />}
+          {page === "settings" && isSuperAdmin && <SettingsPage settings={companySettings} setSettings={setCompanySettings} counters={docCounters} setCounters={setDocCounters} invoices={invoices} supplierPayments={supplierPayments} claims={claims} logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} installJobs={installJobs} trash={trash} notices={notices} onLoad={loadTestData} onClear={clearAllData} />}
           {page === "users" && <UserMgmtPage users={users} setUsers={setUsers} currentUser={user} onAdd={() => { setEditUser(null); setModal("user"); }} onEdit={u => { setEditUser(u); setModal("user"); }} onTrash={trashItem} />}
         </div>
       </div>
@@ -1239,7 +1256,7 @@ export default function App() {
       {modal === "installer" && <InstallerModal edit={editInstaller} installers={installers} setInstallers={setInstallers} onClose={closeModal} />}
       {modal === "product" && <CatalogModal noun="Product" edit={editProduct} items={products} setItems={setProducts} onClose={closeModal} />}
       {modal === "bulk-products" && <BulkAddProductsModal products={products} setProducts={setProducts} onClose={closeModal} />}
-      {modal === "task" && <TaskModal user={user} edit={editTask} tasks={tasks} setTasks={setTasks} onClose={closeModal} />}
+      {modal === "servicing" && servicingProject && <ServicingModal project={servicingProject} invoices={invoices} users={users} products={products} onSave={payload => { createServicingJob(servicingProject, payload); }} onClose={closeModal} />}
     </>
   );
 }
@@ -2622,62 +2639,146 @@ function InstallerModal({ edit, installers, setInstallers, onClose }) {
   );
 }
 
-// ── TASKS / SERVICING ─────────────────────────────────────────────────────────
-function TasksPage({ tasks, setTasks, onAdd, onEdit, onTrash }) {
-  const toggle = id => setTasks(tasks.map(t => t.id === id ? { ...t, status: t.status === "done" ? "open" : "done" } : t));
-  const remove = t => { setTasks(tasks.filter(x => x.id !== t.id)); onTrash("task", t); };
-  const open = tasks.filter(t => t.status !== "done");
-  const done = tasks.filter(t => t.status === "done");
-  const Row = t => (
-    <div className="list-item" key={t.id} style={{ opacity: t.status === "done" ? 0.6 : 1 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-        <input type="checkbox" checked={t.status === "done"} onChange={() => toggle(t.id)} style={{ marginTop: 3, width: 18, height: 18, accentColor: "#9A7B4E", cursor: "pointer" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span className={`badge ${t.type === "Servicing" ? "badge-po" : "badge-do"}`}>{t.type}</span>
-            <span style={{ fontSize: 14, fontWeight: 600, textDecoration: t.status === "done" ? "line-through" : "none" }}>{t.title}</span>
-          </div>
-          {t.details && <div style={{ fontSize: 12, color: "#8A8073", marginTop: 4 }}>{t.details}</div>}
-          <div style={{ fontSize: 11, color: "#8A8073", marginTop: 4 }}>{t.date} · {t.by}</div>
-        </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button className="btn btn-ghost btn-xs" onClick={() => onEdit(t)}>Edit</button>
-          <button className="btn btn-danger btn-xs" onClick={() => remove(t)}>Remove</button>
-        </div>
-      </div>
-    </div>
+// ── SERVICING ──────────────────────────────────────────────────────────────────
+// A "project" is any non-servicing install job — the original delivery+installation
+// record. Servicing jobs are new installJobs entries (same accept/draw/arrive/complete
+// lifecycle as an installation) tagged type:"servicing" and anchored to that project via
+// projectId, so every servicing visit for a site accumulates against the one record.
+function ServicingPage({ jobs, invoices, onDispatch }) {
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
+  const projects = jobs.filter(j => j.type !== "servicing");
+  const rootProjectId = jobId => {
+    const j = jobs.find(x => x.id === jobId);
+    if (!j) return null;
+    return j.type === "servicing" ? j.projectId : j.id;
+  };
+  const q = query.trim().toLowerCase();
+  const invoiceMatchedProjectIds = new Set(
+    q.length >= 2 ? invoices.filter(i => i.refNo && i.refNo.toLowerCase().includes(q)).map(i => rootProjectId(i.jobId)).filter(Boolean) : []
   );
+  const results = q.length < 2 ? [] : projects.filter(p =>
+    (p.poNo || "").toLowerCase().includes(q) ||
+    (p.doNo || "").toLowerCase().includes(q) ||
+    (p.address || "").toLowerCase().includes(q) ||
+    invoiceMatchedProjectIds.has(p.id)
+  ).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const selected = projects.find(p => p.id === selectedId) || null;
+  const history = selected ? jobs.filter(j => j.type === "servicing" && j.projectId === selected.id).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) : [];
+  const selectedInvoice = selected ? invoices.find(i => i.jobId === selected.id) : null;
+
   return (
     <div className="content">
-      <div className="section-hdr"><div className="section-title">Open ({open.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add Task</button></div>
-      {open.length === 0 ? <div className="empty"><div className="empty-icon">🧰</div><div className="empty-lbl">No open tasks or servicing jobs.</div></div> : open.map(Row)}
-      {done.length > 0 && <><div className="section-title" style={{ marginTop: 8 }}>Completed ({done.length})</div>{done.map(Row)}</>}
+      <div className="card">
+        <div className="card-title">Find a Past Project</div>
+        <div className="card-sub" style={{ marginBottom: 10 }}>Search by PO number, DO number, invoice number, or jobsite address.</div>
+        <input className="field-input" placeholder="e.g. PO-123042, INV-DO10003, or an address" value={query} onChange={e => { setQuery(e.target.value); setSelectedId(null); }} />
+      </div>
+
+      {q.length >= 2 && (
+        results.length === 0 ? <div className="empty"><div className="empty-icon">🔍</div><div className="empty-lbl">No matching projects found.</div></div>
+          : results.map(p => (
+            <div className="list-item" key={p.id} onClick={() => setSelectedId(p.id)} style={{ cursor: "pointer", borderColor: selectedId === p.id ? "#9A7B4E" : undefined }}>
+              <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{p.product}</div><span className={`badge badge-${p.status}`}>{JOB_STATUS_LABEL[p.status]}</span></div>
+              {p.dealer && <div style={{ fontSize: 12, color: "#8A8073" }}>🤝 {p.dealer}</div>}
+              <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {p.address}</div>
+              <div style={{ fontSize: 11, color: "#8A8073" }}>{p.poNo} · {p.doNo} · {p.date}</div>
+            </div>
+          ))
+      )}
+
+      {selected && (
+        <div className="card">
+          <div className="card-title">Project — {selected.product}</div>
+          <div className="card-sub">{selected.dealer ? `${selected.dealer} · ` : ""}{selected.address}</div>
+          <div style={{ fontSize: 11, color: "#8A8073", marginBottom: 10 }}>
+            PO {selected.poNo || "—"} · DO {selected.doNo || "—"}{selectedInvoice ? ` · Invoice ${selectedInvoice.refNo}` : ""} · Installed {selected.date}
+          </div>
+          <button className="btn btn-primary btn-sm" style={{ alignSelf: "flex-start" }} onClick={() => onDispatch(selected)}>+ New Servicing Job</button>
+
+          <div className="section-title" style={{ marginTop: 14 }}>Servicing History ({history.length})</div>
+          {history.length === 0 ? <div className="empty" style={{ padding: "16px 0" }}><div className="empty-icon">🧰</div><div className="empty-lbl">No servicing recorded for this project yet.</div></div>
+            : history.map(h => (
+              <div className="list-item" key={h.id}>
+                <div className="item-meta"><div style={{ fontSize: 13, fontWeight: 700 }}>{h.product === "NIL" ? "Servicing — no product" : `Servicing — ${h.product}`}</div><span className={`badge badge-${h.status}`}>{JOB_STATUS_LABEL[h.status]}</span></div>
+                <div style={{ fontSize: 12, color: "#8A8073" }}>{h.date} · Installer: {h.installer}</div>
+                {h.notesForInstaller && <div style={{ fontSize: 12, color: "#8A8073", fontStyle: "italic" }}>Issue: "{h.notesForInstaller}"</div>}
+                {h.completionNotes && <div style={{ fontSize: 12, color: "#8A8073" }}>Outcome: {h.completionNotes}</div>}
+              </div>
+            ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function TaskModal({ user, edit, tasks, setTasks, onClose }) {
-  const [title, setTitle] = useState(edit?.title || "");
-  const [type, setType] = useState(edit?.type || "Task");
-  const [details, setDetails] = useState(edit?.details || "");
+function ServicingModal({ project, invoices, users, products, onSave, onClose }) {
+  const installers = users.filter(u => u.role === "installer");
+  const projectInvoice = invoices.find(i => i.jobId === project.id);
+  const [product, setProduct] = useState("NIL");
+  const [qty, setQty] = useState("1");
+  const [collectWarehouse, setCollectWarehouse] = useState("dispatch");
+  const [address, setAddress] = useState(project.address || "");
+  const [collectPoint, setCollectPoint] = useState("");
+  const [dateISO, setDateISO] = useState(todayISO());
+  const [timeFrom, setTimeFrom] = useState("");
+  const [timeTo, setTimeTo] = useState("");
+  const [installer, setInstaller] = useState("");
+  const [notesForInstaller, setNotesForInstaller] = useState("");
+  const [err, setErr] = useState("");
   const save = () => {
-    const v = title.trim();
-    if (!v) return;
-    if (edit) setTasks(tasks.map(t => t.id === edit.id ? { ...t, title: v, type, details } : t));
-    else setTasks([{ id: Date.now(), title: v, type, details, date: todayStr(), dateISO: todayISO(), by: user.name, status: "open" }, ...tasks]);
-    onClose();
+    if (!address.trim()) { setErr("Please confirm the jobsite address."); return; }
+    if (!installer) { setErr("Select which installer to dispatch."); return; }
+    if (!dateISO || !timeFrom || !timeTo) { setErr("Fill in the servicing date and time."); return; }
+    if (product !== "NIL" && (!qty || Number(qty) <= 0)) { setErr("Enter a quantity for the product being serviced."); return; }
+    onSave({
+      product, qty: product === "NIL" ? 0 : (Number(qty) || 0), collectWarehouse,
+      address, collectPoint,
+      date: fmtDate(new Date(dateISO + "T00:00:00")), dateISO, timeFrom, timeTo,
+      installer, notesForInstaller,
+    });
   };
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
-      <div className="modal-handle" /><div className="modal-title">{edit ? "Edit Task" : "Add Task / Servicing Job"}</div>
-      <div className="form-group"><div className="field-label">Type</div>
-        <div className="role-row">
-          {["Task", "Servicing"].map(o => <button key={o} className={`role-btn ${type === o ? "active" : ""}`} onClick={() => setType(o)}>{o}</button>)}
-        </div>
+      <div className="modal-handle" /><div className="modal-title">New Servicing Job</div>
+      <div className="card-sub" style={{ marginBottom: 4 }}>Project: {project.product}{project.dealer ? ` · ${project.dealer}` : ""}</div>
+      <div style={{ fontSize: 12, color: "#8A8073", marginBottom: 10 }}>
+        Confirm — PO {project.poNo || "—"} · DO {project.doNo || "—"}{projectInvoice ? ` · Invoice ${projectInvoice.refNo}` : " · No invoice on file yet"}
       </div>
-      <div className="form-group"><div className="field-label">Title</div><input className="field-input" autoFocus placeholder="What needs doing?" value={title} onChange={e => setTitle(e.target.value)} onKeyDown={e => e.key === "Enter" && save()} /></div>
-      <div className="form-group"><div className="field-label">Details</div><input className="field-input" placeholder="Site, dealer, notes…" value={details} onChange={e => setDetails(e.target.value)} /></div>
-      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+      <div className="form-group"><div className="field-label">Jobsite Address (confirm)</div><input className="field-input" value={address} onChange={e => setAddress(e.target.value)} /></div>
+      <div className="form-group"><div className="field-label">What to Service</div>
+        <select className="field-select" value={product} onChange={e => setProduct(e.target.value)}>
+          <option value="NIL">NIL — no product, faulty installation / issue only</option>
+          {products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+        </select>
+      </div>
+      {product !== "NIL" && (
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">Quantity</div><input className="field-input" type="number" inputMode="numeric" value={qty} onChange={e => setQty(e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">Collect From</div>
+            <select className="field-select" value={collectWarehouse} onChange={e => setCollectWarehouse(e.target.value)}>
+              <option value="dispatch">{WAREHOUSE_LABEL.dispatch}</option>
+              <option value="main">{WAREHOUSE_LABEL.main}</option>
+            </select>
+          </div>
+        </div>
+      )}
+      <div className="form-group"><div className="field-label">Collection Point</div><input className="field-input" placeholder="Where to collect the goods (e.g. warehouse)" value={collectPoint} onChange={e => setCollectPoint(e.target.value)} /></div>
+      <div className="form-group"><div className="field-label">Dispatch Installer</div>
+        <select className="field-select" value={installer} onChange={e => setInstaller(e.target.value)}>
+          <option value="">Select an installer…</option>
+          {installers.map(i => <option key={i.id} value={i.name}>{i.name}</option>)}
+        </select>
+        {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installer accounts yet — add one in User Management first.</div>}
+      </div>
+      <div className="input-row-3">
+        <div className="form-group"><div className="field-label">Date</div><input className="field-input" type="date" value={dateISO} onChange={e => setDateISO(e.target.value)} /></div>
+        <div className="form-group"><div className="field-label">From</div><input className="field-input" type="time" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} /></div>
+        <div className="form-group"><div className="field-label">To</div><input className="field-input" type="time" value={timeTo} onChange={e => setTimeTo(e.target.value)} /></div>
+      </div>
+      <div className="form-group"><div className="field-label">Issue / Notes for Installer</div><input className="field-input" placeholder="Describe the issue to resolve" value={notesForInstaller} onChange={e => setNotesForInstaller(e.target.value)} /></div>
+      {err && <div className="login-err">{err}</div>}
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Dispatch Servicing Job</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
     </div></div>
   );
 }
@@ -2928,38 +3029,45 @@ function DrawConfirmForm({ job, products, onDraw }) {
 // Installer's final step: confirm which drawn item was actually installed (only one
 // item/qty combo counts — the rest of what was drawn auto-returns to Dispatch).
 function CompleteInstallForm({ job, onComplete }) {
+  const isNil = job.product === "NIL";
   const options = job.drawnItems || [];
   const [product, setProduct] = useState(options[0]?.product || "");
   const [qty, setQty] = useState(String(options[0]?.qty || 1));
   const [installedPhoto, setInstalledPhoto] = useState(null);
   const [returnPhoto, setReturnPhoto] = useState(null);
+  const [notes, setNotes] = useState("");
   const [err, setErr] = useState("");
   const hpInstalled = e => handlePhoto(e, setInstalledPhoto);
   const hpReturn = e => handlePhoto(e, setReturnPhoto);
   const maxQty = options.find(o => o.product === product)?.qty || 0;
   const returned = options.map(o => o.product === product ? { product: o.product, qty: o.qty - (Number(qty) || 0) } : { ...o }).filter(o => o.qty > 0);
   const submit = () => {
+    if (isNil) { onComplete(job.id, "NIL", 0, installedPhoto, [], null, notes); return; }
     if (!product || !qty || Number(qty) <= 0) { setErr("Select the installed product and quantity."); return; }
     if (Number(qty) > maxQty) { setErr(`Can't install more than the ${maxQty} drawn.`); return; }
-    onComplete(job.id, product, Number(qty), installedPhoto, returned, returnPhoto);
+    onComplete(job.id, product, Number(qty), installedPhoto, returned, returnPhoto, notes);
   };
   return (
     <>
-      <div className="field-label" style={{ marginTop: 4 }}>Step 3 — Confirm what was installed</div>
-      <div className="input-row-2">
-        <div className="form-group"><div className="field-label">Installed Product</div>
-          <select className="field-select" value={product} onChange={e => setProduct(e.target.value)}>
-            {options.map((o, i) => <option key={i} value={o.product}>{o.product}</option>)}
-          </select>
+      <div className="field-label" style={{ marginTop: 4 }}>Step 3 — Confirm {isNil ? "servicing outcome" : "what was installed"}</div>
+      {isNil ? (
+        <div className="form-group"><div className="field-label">What was done</div><input className="field-input" placeholder="e.g. Re-sealed the base, no parts replaced" value={notes} onChange={e => setNotes(e.target.value)} /></div>
+      ) : (
+        <div className="input-row-2">
+          <div className="form-group"><div className="field-label">Installed Product</div>
+            <select className="field-select" value={product} onChange={e => setProduct(e.target.value)}>
+              {options.map((o, i) => <option key={i} value={o.product}>{o.product}</option>)}
+            </select>
+          </div>
+          <div className="form-group"><div className="field-label">Qty Installed</div><input className="field-input" type="number" inputMode="numeric" value={qty} onChange={e => setQty(e.target.value)} /></div>
         </div>
-        <div className="form-group"><div className="field-label">Qty Installed</div><input className="field-input" type="number" inputMode="numeric" value={qty} onChange={e => setQty(e.target.value)} /></div>
-      </div>
-      <div className="field-label">Installed Photo (optional)</div>
+      )}
+      <div className="field-label">{isNil ? "Photo (optional)" : "Installed Photo (optional)"}</div>
       <div className="photo-zone">
         <input type="file" accept="image/*" capture="environment" onChange={hpInstalled} />
-        {installedPhoto ? <img src={installedPhoto} alt="installed" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the installed product</div></>}
+        {installedPhoto ? <img src={installedPhoto} alt="installed" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">{isNil ? "Tap to photograph the fix" : "Tap to photograph the installed product"}</div></>}
       </div>
-      {returned.length > 0 && (
+      {!isNil && returned.length > 0 && (
         <>
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Will return to {WAREHOUSE_LABEL[job.collectWarehouse || "dispatch"]}:</div>
@@ -2973,7 +3081,7 @@ function CompleteInstallForm({ job, onComplete }) {
         </>
       )}
       {err && <div className="login-err">{err}</div>}
-      <button className="btn btn-primary btn-sm" onClick={submit}>✓ Complete Installation</button>
+      <button className="btn btn-primary btn-sm" onClick={submit}>{isNil ? "✓ Complete Servicing" : "✓ Complete Installation"}</button>
     </>
   );
 }
@@ -2999,27 +3107,32 @@ function InstallerJobsPage({ jobs, products, me, onAccept, onDraw, onArrivalPhot
       {active.length > 0 && <div className="section-title" style={{ marginTop: 8 }}>Active Jobs ({active.length})</div>}
       {active.map(j => (
         <div className="list-item" key={j.id}>
-          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.product}</div><span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span></div>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>To draw: {j.qty} × {j.product}</div>
+          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.type === "servicing" ? (j.product === "NIL" ? "Servicing — Site Visit" : `Servicing — ${j.product}`) : j.product}</div><span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span></div>
+          {j.product !== "NIL" && <div style={{ fontSize: 13, fontWeight: 500 }}>To draw: {j.qty} × {j.product}</div>}
           {j.dealer && <div style={{ fontSize: 12, color: "#8A8073" }}>🤝 Dealer: {j.dealer}</div>}
           <div style={{ fontSize: 12, color: "#8A8073" }}>📍 Jobsite: {j.address}</div>
-          <div style={{ fontSize: 12, color: "#8A8073" }}>📦 Collect goods: {j.collectPoint || "—"}</div>
+          {j.product !== "NIL" && <div style={{ fontSize: 12, color: "#8A8073" }}>📦 Collect goods: {j.collectPoint || "—"}</div>}
           <div style={{ fontSize: 12, color: "#8A8073" }}>🗓 {j.date} · {fmt12h(j.timeFrom)}–{fmt12h(j.timeTo)}</div>
           <div style={{ fontSize: 11, color: "#8A8073" }}>{j.poNo} · {j.doNo}</div>
+          {j.notesForInstaller && <div style={{ fontSize: 12, color: "#8A8073", fontStyle: "italic" }}>Note: "{j.notesForInstaller}"</div>}
 
           {j.status === "accepted" && <DrawConfirmForm job={j} products={products} onDraw={onDraw} />}
 
           {j.status === "drawn" && (
             <>
-              <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Drawn from {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
-                {j.drawnItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
-                {j.extraPhotos && j.extraPhotos.length > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-                    {j.extraPhotos.map((p, i) => <img key={i} src={p} alt="extra" className="photo-preview" style={{ width: 70, height: 70 }} />)}
-                  </div>
-                )}
-              </div>
+              {j.product === "NIL" ? (
+                <div style={{ fontSize: 12, color: "#8A8073", fontStyle: "italic" }}>No stock to draw for this visit.</div>
+              ) : (
+                <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Drawn from {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
+                  {j.drawnItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
+                  {j.extraPhotos && j.extraPhotos.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                      {j.extraPhotos.map((p, i) => <img key={i} src={p} alt="extra" className="photo-preview" style={{ width: 70, height: 70 }} />)}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="field-label" style={{ marginTop: 4 }}>Step 2 — Arrival (photo optional)</div>
               <div className="photo-zone">
                 <input type="file" accept="image/*" capture="environment" onChange={e => { const f = e.target.files[0]; if (f) onArrivalPhoto(j.id, f); }} />
@@ -3045,8 +3158,9 @@ function InstallerJobsPage({ jobs, products, me, onAccept, onDraw, onArrivalPhot
       {done.length > 0 && <div className="section-title" style={{ marginTop: 8 }}>Completed ({done.length})</div>}
       {done.map(j => (
         <div className="list-item" key={j.id} style={{ opacity: 0.85 }}>
-          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.installedQty} × {j.installedProduct}</div><span className="badge badge-completed">Completed</span></div>
+          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.installedProduct === "NIL" ? "Servicing — Site Visit" : `${j.installedQty} × ${j.installedProduct}`}</div><span className="badge badge-completed">Completed</span></div>
           <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {j.address}</div>
+          {j.completionNotes && <div style={{ fontSize: 12, color: "#8A8073" }}>{j.completionNotes}</div>}
           <div style={{ display: "flex", gap: 8 }}>
             {j.arrivalPhoto && <img src={j.arrivalPhoto} alt="arrival" className="photo-preview" style={{ flex: 1 }} />}
             {j.installedPhoto && <img src={j.installedPhoto} alt="installed" className="photo-preview" style={{ flex: 1 }} />}
@@ -3664,10 +3778,10 @@ function BalanceSheetView({ invoices, supplierPayments, claims }) {
 }
 
 // ── DATA MANAGEMENT (super admin) ─────────────────────────────────────────────
-function SystemPageView({ logs, damages, docs, dealers, products, tasks, trash, notices, onLoad, onClear }) {
-  const rows = [["Daily logs", logs.length], ["Damage", damages.length], ["Documents", docs.length], ["Dealers", dealers.length], ["Products", products.length], ["Tasks", tasks.length], ["Trash", trash.length], ["Notices", notices.length]];
-  const load = () => { if (window.confirm("Load sample test data? This overwrites current logs, documents, dealers, products, tasks, trash and notices. User accounts are kept.")) onLoad(); };
-  const clear = () => { if (window.confirm("Delete ALL business data (logs, documents, dealers, products, tasks, trash, notices)? User accounts are kept. This cannot be undone.")) onClear(); };
+function SystemPageView({ logs, damages, docs, dealers, products, installJobs, trash, notices, onLoad, onClear }) {
+  const rows = [["Daily logs", logs.length], ["Damage", damages.length], ["Documents", docs.length], ["Dealers", dealers.length], ["Products", products.length], ["Install/Service Jobs", installJobs.length], ["Trash", trash.length], ["Notices", notices.length]];
+  const load = () => { if (window.confirm("Load sample test data? This overwrites current logs, documents, dealers, products, jobs, trash and notices. User accounts are kept.")) onLoad(); };
+  const clear = () => { if (window.confirm("Delete ALL business data (logs, documents, dealers, products, jobs, trash, notices)? User accounts are kept. This cannot be undone.")) onClear(); };
   return (
     <>
       <div className="card">
@@ -3683,12 +3797,12 @@ function SystemPageView({ logs, damages, docs, dealers, products, tasks, trash, 
       </div>
       <div className="card">
         <div className="card-title">Load Test Data</div>
-        <div className="card-sub" style={{ marginBottom: 14 }}>Fills the app with sample dealers, products, daily logs, documents, tasks, notices and an empty trash so you can try things out. Overwrites the current business data — user accounts are kept.</div>
+        <div className="card-sub" style={{ marginBottom: 14 }}>Fills the app with sample dealers, products, daily logs, documents, notices and an empty trash so you can try things out. Overwrites the current business data — user accounts are kept.</div>
         <button className="btn btn-primary" onClick={load}>Load Test Data</button>
       </div>
       <div className="card" style={{ borderColor: "#F6CDCD" }}>
         <div className="card-title" style={{ color: "#B91C1C" }}>Clear All Data</div>
-        <div className="card-sub" style={{ marginBottom: 14 }}>Permanently removes all logs, damage reports, documents, dealers, products, tasks, trash and notices, leaving a clean slate for real use. User accounts are kept. This cannot be undone.</div>
+        <div className="card-sub" style={{ marginBottom: 14 }}>Permanently removes all logs, damage reports, documents, dealers, products, jobs, trash and notices, leaving a clean slate for real use. User accounts are kept. This cannot be undone.</div>
         <button className="btn btn-danger" onClick={clear}>Clear All Data</button>
       </div>
     </>
@@ -3696,7 +3810,7 @@ function SystemPageView({ logs, damages, docs, dealers, products, tasks, trash, 
 }
 
 // ── SETTINGS (super admin) — Company / Balance Sheet / Data Management ────────
-function SettingsPage({ settings, setSettings, counters, setCounters, invoices, supplierPayments, claims, logs, damages, docs, dealers, products, tasks, trash, notices, onLoad, onClear }) {
+function SettingsPage({ settings, setSettings, counters, setCounters, invoices, supplierPayments, claims, logs, damages, docs, dealers, products, installJobs, trash, notices, onLoad, onClear }) {
   const [tab, setTab] = useState("company");
   return (
     <div className="content">
@@ -3707,7 +3821,7 @@ function SettingsPage({ settings, setSettings, counters, setCounters, invoices, 
       </div>
       {tab === "company" && <CompanySettingsView settings={settings} setSettings={setSettings} counters={counters} setCounters={setCounters} />}
       {tab === "balance" && <BalanceSheetView invoices={invoices} supplierPayments={supplierPayments} claims={claims} />}
-      {tab === "data" && <SystemPageView logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} trash={trash} notices={notices} onLoad={onLoad} onClear={onClear} />}
+      {tab === "data" && <SystemPageView logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} installJobs={installJobs} trash={trash} notices={notices} onLoad={onLoad} onClear={onClear} />}
     </div>
   );
 }
