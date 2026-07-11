@@ -1896,6 +1896,7 @@ function LogRow({ log, job, onDelete, onEditInstall }) {
           {!multi && log.product && <span className="entry-tag product">🛁 {log.product}</span>}
         </div>
       )}
+      {log.address && log.deliveryType !== "installation" && <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {log.address}</div>}
       {multi ? (
         items.map((it, i) => (
           <div key={i} style={{ background: "var(--bg)", borderRadius: 8, padding: "6px 10px" }}>
@@ -3833,11 +3834,11 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
   const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
   const [dateISO,setDateISO]=useState(todayISO());
   const [deliveryType, setDeliveryType] = useState("delivery"); // "delivery" | "installation"
+  const [address, setAddress] = useState("");
   const [installer,setInstaller]=useState("");
   const [installProduct, setInstallProduct] = useState("");
   const [installQty, setInstallQty] = useState("");
   const [installCollectWarehouse, setInstallCollectWarehouse] = useState("dispatch");
-  const [installAddress, setInstallAddress] = useState("");
   const [installCollectPoint, setInstallCollectPoint] = useState("");
   const [installDateISO, setInstallDateISO] = useState(todayISO());
   const [installTimeFrom, setInstallTimeFrom] = useState("");
@@ -3855,7 +3856,10 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
   const chooseDeliveryAndInstall = () => {
     setDeliveryType("installation");
     if (!installProduct && installCandidates[0]) { setInstallProduct(installCandidates[0].product); setInstallQty(installCandidates[0].delivered); }
-    if (!installAddress) setInstallAddress(dealers.find(d => d.name === dealer)?.address || "");
+  };
+  const setDealerAndPrefillAddress = val => {
+    setDealer(val);
+    if (!address) setAddress(dealers.find(d => d.name === val)?.address || "");
   };
   const save=()=>{
     if(!dealer){ setErr("Please select a dealer."); return; }
@@ -3863,14 +3867,15 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
       .map(r => ({ product: r.product, price: priceFor(r.product), sold: Number(r.delivered)||0, returned: Number(r.returned)||0, exchanged: Number(r.exchanged)||0 }));
     if(items.length === 0){ setErr("Add at least one product with a delivered, returned or exchanged quantity."); return; }
     if(!dateISO){ setErr("Please select a date."); return; }
+    if(!address.trim()){ setErr("Please enter the delivery address."); return; }
     let installJob;
     if (deliveryType === "installation") {
       if (!installer) { setErr("Select an installer for this delivery & installation order."); return; }
       if (!installProduct || !installQty || Number(installQty) <= 0) { setErr("Select what's being installed and the quantity."); return; }
-      if (!installAddress || !installDateISO || !installTimeFrom || !installTimeTo) { setErr("Fill in the jobsite address and installation date/time."); return; }
+      if (!installDateISO || !installTimeFrom || !installTimeTo) { setErr("Fill in the installation date/time."); return; }
       installJob = {
         product: installProduct, qty: Number(installQty) || 0, collectWarehouse: installCollectWarehouse,
-        address: installAddress, collectPoint: installCollectPoint,
+        address, collectPoint: installCollectPoint,
         date: fmtDate(new Date(installDateISO + "T00:00:00")), dateISO: installDateISO,
         timeFrom: installTimeFrom, timeTo: installTimeTo, installer, notesForInstaller: installNotes,
       };
@@ -3878,7 +3883,7 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
     const dealerRec = dealers.find(d=>d.name===dealer);
     onSave({
       id: Date.now(),
-      dealer, items,
+      dealer, items, address,
       // Kept for any code still reading a single product/qty (e.g. legacy displays) —
       // reflects the first line item; downstream PDF/billing logic reads `items` directly.
       product: items[0].product, price: items[0].price, sold: items[0].sold, returned: items[0].returned, exchanged: items[0].exchanged,
@@ -3894,7 +3899,7 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
         <div className="form-group"><div className="field-label">Order Date</div><input className="field-input" type="date" value={dateISO} onChange={e=>setDateISO(e.target.value)}/></div>
       )}
       <div className="form-group"><div className="field-label">Dealer</div>
-        <select className="field-select" value={dealer} onChange={e=>setDealer(e.target.value)}>
+        <select className="field-select" value={dealer} onChange={e=>setDealerAndPrefillAddress(e.target.value)}>
           <option value="">Select an approved dealer…</option>
           {dealers.map(d=><option key={d.id} value={d.name}>{d.name}</option>)}
         </select>
@@ -3931,6 +3936,7 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
           Delivery Only
         </label>
       </div>
+      <div className="form-group"><div className="field-label">{deliveryType === "installation" ? "Jobsite Address" : "Delivery Address"}</div><input className="field-input" placeholder="Full address" value={address} onChange={e=>setAddress(e.target.value)}/></div>
       {deliveryType === "installation" && (
         <div style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 10px 4px" }}>
           <div className="form-group"><div className="field-label">What's being installed</div>
@@ -3960,7 +3966,6 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
             </select>
             {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installers yet — add one in the Installers page first.</div>}
           </div>
-          <div className="form-group"><div className="field-label">Jobsite Address</div><input className="field-input" placeholder="Full installation address" value={installAddress} onChange={e=>setInstallAddress(e.target.value)}/></div>
           <div className="form-group"><div className="field-label">Collection Point</div><input className="field-input" placeholder="Where to collect the goods (e.g. warehouse)" value={installCollectPoint} onChange={e=>setInstallCollectPoint(e.target.value)}/></div>
           <div className="input-row-3">
             <div className="form-group"><div className="field-label">Date</div><input className="field-input" type="date" value={installDateISO} onChange={e=>setInstallDateISO(e.target.value)}/></div>
