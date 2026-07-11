@@ -694,7 +694,7 @@ const sgd = n => "$" + Number(n || 0).toLocaleString("en-SG", { maximumFractionD
 const SALES_ROLES = ["salesperson", "admin", "superadmin"];
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: "📊", admin: false, roles: SALES_ROLES },
-  { id: "daily", label: "Orders", icon: "📝", admin: false, roles: SALES_ROLES },
+  { id: "daily", label: "Job Orders", icon: "📝", admin: false, roles: SALES_ROLES },
   { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false, roles: [...SALES_ROLES, "installer"] },
   { id: "documents", label: "Documents", icon: "📄", admin: false, roles: SALES_ROLES },
   { id: "claims", label: "Claims", icon: "🧾", admin: false, roles: [...SALES_ROLES, "installer"] },
@@ -1261,7 +1261,7 @@ export default function App() {
           </div>
 
           {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("inventory")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
-          {page === "daily" && <DailyPage logs={logs} installJobs={installJobs} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} onEditInstall={l => { setEditInstallJob(installJobs.find(j => j.id === l.installJobId) || null); setEditOrderLog(l); setModal("install-job"); }} onEditItems={l => { setEditOrderLog(l); setModal("edit-order-items"); }} />}
+          {page === "daily" && <DailyPage logs={logs} installJobs={installJobs} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} onEditInstall={l => { setEditInstallJob(installJobs.find(j => j.id === l.installJobId) || null); setEditOrderLog(l); setModal("install-job"); }} onEditItems={l => { setEditOrderLog(l); setModal("edit-order-items"); }} onEditServicing={j => { setEditInstallJob(j); setModal("servicing-edit"); }} />}
           {page === "damage" && <DamagePage damages={damages} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} onSendReplacement={sendReplacement} onActivateServicing={activateServicing} onReject={rejectDamage} onMarkServicingDone={markServicingDone} />}
           {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} onDelete={deleteDoc} />}
           {page === "reports" && <ReportsPage logs={logs} />}
@@ -1298,6 +1298,7 @@ export default function App() {
       {modal === "product" && <CatalogModal noun="Product" edit={editProduct} items={products} setItems={setProducts} onClose={closeModal} />}
       {modal === "bulk-products" && <BulkAddProductsModal products={products} setProducts={setProducts} onClose={closeModal} />}
       {modal === "servicing" && servicingProject && <ServicingModal project={servicingProject} invoices={invoices} users={users} products={products} onSave={payload => { createServicingJob(servicingProject, payload); }} onClose={closeModal} />}
+      {modal === "servicing-edit" && editInstallJob && <ServicingModal edit={editInstallJob} invoices={invoices} users={users} products={products} onSave={payload => updateInstallJob(editInstallJob.id, payload)} onClose={closeModal} />}
     </>
   );
 }
@@ -1892,18 +1893,21 @@ function SalesCalendar({ logs, isAdmin }) {
 }
 
 // ── DAILY LOG ─────────────────────────────────────────────────────────────────
-function DailyPage({ logs, installJobs, dealers, me, isAdmin, onAdd, onDelete, onEditInstall, onEditItems }) {
+function DailyPage({ logs, installJobs, dealers, me, isAdmin, onAdd, onDelete, onEditInstall, onEditItems, onEditServicing }) {
   const [filterDate, setFilterDate] = useState(todayISO());
   const mine = isAdmin ? logs : logs.filter(l => canSeeOrder(l, me, dealers));
   const filtered = filterDate ? mine.filter(l => l.dateISO === filterDate) : mine;
   const delivered = filtered.reduce((s, l) => s + logTotals(l).sold, 0);
   const returned = filtered.reduce((s, l) => s + logTotals(l).returned, 0);
   const exchanged = filtered.reduce((s, l) => s + logTotals(l).exchanged, 0);
+  // Servicing jobs are keyed in from the Servicing tab (not a sales order) but admin
+  // should still be able to monitor and correct them from the same Job Orders list.
+  const servicingJobs = isAdmin ? (installJobs || []).filter(j => j.type === "servicing" && (!filterDate || j.dateISO === filterDate)) : [];
   return (
     <div className="content">
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-          <div className="card-title" style={{ marginBottom: 0 }}>{isAdmin ? "All Orders" : "My Orders"} · Filter by Date</div>
+          <div className="card-title" style={{ marginBottom: 0 }}>{isAdmin ? "All Job Orders" : "My Job Orders"} · Filter by Date</div>
           <button className="btn btn-ghost btn-xs" onClick={() => setFilterDate("")}>Show All</button>
         </div>
         <input className="field-input" type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
@@ -1921,6 +1925,30 @@ function DailyPage({ logs, installJobs, dealers, me, isAdmin, onAdd, onDelete, o
       <div className="section-hdr"><div className="section-title">Orders ({filtered.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Order</button></div>
       {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📝</div><div className="empty-lbl">No orders for this date.</div></div>
         : filtered.map((l, i) => <LogRow key={l.id ?? i} log={l} job={(installJobs || []).find(j => j.id === l.installJobId) || null} onDelete={(isAdmin || l.by === me) ? () => onDelete(l) : null} onEditInstall={(isAdmin || canSeeOrder(l, me, dealers)) && onEditInstall ? () => onEditInstall(l) : null} onEditItems={(isAdmin || l.by === me) && onEditItems ? () => onEditItems(l) : null} />)}
+      {isAdmin && servicingJobs.length > 0 && (
+        <>
+          <div className="section-hdr"><div className="section-title">Servicing Jobs ({servicingJobs.length})</div></div>
+          {servicingJobs.map(j => <ServicingJobRow key={j.id} job={j} onEdit={onEditServicing} />)}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ServicingJobRow({ job, onEdit }) {
+  return (
+    <div className="list-item">
+      <div className="item-meta"><div className="item-time">{job.date} · {fmt12h(job.timeFrom)}</div><span className={`badge badge-${job.status}`}>{JOB_STATUS_LABEL[job.status]}</span></div>
+      <div className="entry-tags">
+        <span className="entry-tag">🧰 Servicing</span>
+        {job.dealer && <span className="entry-tag">🤝 {job.dealer}</span>}
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 700 }}>{job.product === "NIL" ? "Site Visit — no product" : `${job.qty} × ${job.product}`}</div>
+      <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {job.address}</div>
+      <div style={{ fontSize: 11, color: "#8A8073" }}>PO {job.poNo || "—"} · DO {job.doNo || "—"}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#9A7B4E" }}>Installer: {job.installer}</div>
+      {job.notesForInstaller && <div style={{ fontSize: 12, color: "#8A8073", fontStyle: "italic" }}>Issue: "{job.notesForInstaller}"</div>}
+      {["pending", "accepted"].includes(job.status) && onEdit && <button className="btn btn-ghost btn-xs" style={{ alignSelf: "flex-start" }} onClick={() => onEdit(job)}>✎ Edit Servicing Job</button>}
     </div>
   );
 }
@@ -2756,19 +2784,19 @@ function ServicingPage({ jobs, invoices, onDispatch }) {
   );
 }
 
-function ServicingModal({ project, invoices, users, products, onSave, onClose }) {
+function ServicingModal({ project, edit, invoices, users, products, onSave, onClose }) {
   const installers = users.filter(u => u.role === "installer");
-  const projectInvoice = invoices.find(i => i.jobId === project.id);
-  const [product, setProduct] = useState("NIL");
-  const [qty, setQty] = useState("1");
-  const [collectWarehouse, setCollectWarehouse] = useState("dispatch");
-  const [address, setAddress] = useState(project.address || "");
-  const [collectPoint, setCollectPoint] = useState("");
-  const [dateISO, setDateISO] = useState(todayISO());
-  const [timeFrom, setTimeFrom] = useState("");
-  const [timeTo, setTimeTo] = useState("");
-  const [installer, setInstaller] = useState("");
-  const [notesForInstaller, setNotesForInstaller] = useState("");
+  const projectInvoice = project ? invoices.find(i => i.jobId === project.id) : null;
+  const [product, setProduct] = useState(edit?.product || "NIL");
+  const [qty, setQty] = useState(edit ? String(edit.qty || 1) : "1");
+  const [collectWarehouse, setCollectWarehouse] = useState(edit?.collectWarehouse || "dispatch");
+  const [address, setAddress] = useState(edit?.address ?? (project?.address || ""));
+  const [collectPoint, setCollectPoint] = useState(edit?.collectPoint || "");
+  const [dateISO, setDateISO] = useState(edit?.dateISO || todayISO());
+  const [timeFrom, setTimeFrom] = useState(edit?.timeFrom || "");
+  const [timeTo, setTimeTo] = useState(edit?.timeTo || "");
+  const [installer, setInstaller] = useState(edit?.installer || "");
+  const [notesForInstaller, setNotesForInstaller] = useState(edit?.notesForInstaller || "");
   const [err, setErr] = useState("");
   const save = () => {
     if (!address.trim()) { setErr("Please confirm the jobsite address."); return; }
@@ -2784,10 +2812,12 @@ function ServicingModal({ project, invoices, users, products, onSave, onClose })
   };
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
-      <div className="modal-handle" /><div className="modal-title">New Servicing Job</div>
-      <div className="card-sub" style={{ marginBottom: 4 }}>Project: {project.product}{project.dealer ? ` · ${project.dealer}` : ""}</div>
+      <div className="modal-handle" /><div className="modal-title">{edit ? "Edit Servicing Job" : "New Servicing Job"}</div>
+      {project && <div className="card-sub" style={{ marginBottom: 4 }}>Project: {project.product}{project.dealer ? ` · ${project.dealer}` : ""}</div>}
       <div style={{ fontSize: 12, color: "#8A8073", marginBottom: 10 }}>
-        Confirm — PO {project.poNo || "—"} · DO {project.doNo || "—"}{projectInvoice ? ` · Invoice ${projectInvoice.refNo}` : " · No invoice on file yet"}
+        {edit
+          ? `${edit.dealer ? `${edit.dealer} · ` : ""}PO ${edit.poNo || "—"} · DO ${edit.doNo || "—"}`
+          : `Confirm — PO ${project.poNo || "—"} · DO ${project.doNo || "—"}${projectInvoice ? ` · Invoice ${projectInvoice.refNo}` : " · No invoice on file yet"}`}
       </div>
       <div className="form-group"><div className="field-label">Jobsite Address (confirm)</div><input className="field-input" value={address} onChange={e => setAddress(e.target.value)} /></div>
       <div className="form-group"><div className="field-label">What to Service</div>
@@ -2822,7 +2852,7 @@ function ServicingModal({ project, invoices, users, products, onSave, onClose })
       </div>
       <div className="form-group"><div className="field-label">Issue / Notes for Installer</div><input className="field-input" placeholder="Describe the issue to resolve" value={notesForInstaller} onChange={e => setNotesForInstaller(e.target.value)} /></div>
       {err && <div className="login-err">{err}</div>}
-      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Dispatch Servicing Job</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>{edit ? "Save Changes" : "Dispatch Servicing Job"}</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
     </div></div>
   );
 }
