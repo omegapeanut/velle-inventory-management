@@ -577,6 +577,14 @@ function logTotals(l) {
     return acc;
   }, { sold: 0, returned: 0, exchanged: 0, value: 0 });
 }
+// A salesperson can see an order if they created it, OR if it's under a dealer
+// assigned to them — so orders another salesperson (or admin) logged against one of
+// your dealers still show up for you, not just orders you personally keyed in.
+function canSeeOrder(l, me, dealers) {
+  if (l.by === me) return true;
+  const dealerRec = l.dealer && dealers.find(d => d.name === l.dealer);
+  return !!dealerRec && dealerRec.salesperson === me;
+}
 
 // Pure calc: every dealer with net-positive quantity in a given month, with billable
 // lines and totals. Shared by the billing preview, manual generation, and auto-generation.
@@ -666,7 +674,12 @@ const fmt12h = hhmm => {
 const fmtDate = d => d.toLocaleDateString("en-SG", { day: "2-digit", month: "short", year: "numeric" });
 const fmtTime = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 const todayStr = () => fmtDate(new Date());
-const todayISO = () => new Date().toISOString().split("T")[0];
+// Local calendar date, not UTC — toISOString() would report yesterday's date for the
+// first ~8 hours of the day in Singapore (UTC+8), disagreeing with todayStr()/fmtTime().
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
 // Start-of-period ISO date (Monday-based week) for daily/weekly/monthly/yearly filtering.
 const periodStartISO = (p) => {
@@ -1221,7 +1234,7 @@ export default function App() {
           </div>
 
           {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("inventory")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
-          {page === "daily" && <DailyPage logs={logs} installJobs={installJobs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} onEditInstall={l => { setEditInstallJob(installJobs.find(j => j.id === l.installJobId) || null); setEditOrderLog(l); setModal("install-job"); }} />}
+          {page === "daily" && <DailyPage logs={logs} installJobs={installJobs} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} onEditInstall={l => { setEditInstallJob(installJobs.find(j => j.id === l.installJobId) || null); setEditOrderLog(l); setModal("install-job"); }} />}
           {page === "damage" && <DamagePage damages={damages} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} onSendReplacement={sendReplacement} onActivateServicing={activateServicing} onReject={rejectDamage} onMarkServicingDone={markServicingDone} />}
           {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} onDelete={deleteDoc} />}
           {page === "reports" && <ReportsPage logs={logs} />}
@@ -1328,8 +1341,9 @@ function LoginScreen({ users, onLogin }) {
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
 function DashboardPage({ logs, damages, docs, products, users, notices, dealers, targets, isAdmin, me, onAdd, onGoStock, onAck, onPostNotice }) {
   const [period, setPeriod] = useState("day");
-  // Salespeople only ever see their own orders; admins see everything.
-  const scoped = isAdmin ? logs : logs.filter(l => l.by === me);
+  // Salespeople see orders they created plus any order under a dealer assigned to
+  // them; admins see everything.
+  const scoped = isAdmin ? logs : logs.filter(l => canSeeOrder(l, me, dealers));
   // Sales summary for the chosen period (daily / weekly / monthly; yearly is admin-only).
   const pStartISO = periodStartISO(period);
   const periodLogs = scoped.filter(l => l.dateISO >= pStartISO);
@@ -1850,9 +1864,9 @@ function SalesCalendar({ logs, isAdmin }) {
 }
 
 // ── DAILY LOG ─────────────────────────────────────────────────────────────────
-function DailyPage({ logs, installJobs, me, isAdmin, onAdd, onDelete, onEditInstall }) {
+function DailyPage({ logs, installJobs, dealers, me, isAdmin, onAdd, onDelete, onEditInstall }) {
   const [filterDate, setFilterDate] = useState(todayISO());
-  const mine = isAdmin ? logs : logs.filter(l => l.by === me);
+  const mine = isAdmin ? logs : logs.filter(l => canSeeOrder(l, me, dealers));
   const filtered = filterDate ? mine.filter(l => l.dateISO === filterDate) : mine;
   const delivered = filtered.reduce((s, l) => s + logTotals(l).sold, 0);
   const returned = filtered.reduce((s, l) => s + logTotals(l).returned, 0);
@@ -1878,7 +1892,7 @@ function DailyPage({ logs, installJobs, me, isAdmin, onAdd, onDelete, onEditInst
       </div>
       <div className="section-hdr"><div className="section-title">Orders ({filtered.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Order</button></div>
       {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📝</div><div className="empty-lbl">No orders for this date.</div></div>
-        : filtered.map((l, i) => <LogRow key={l.id ?? i} log={l} job={(installJobs || []).find(j => j.id === l.installJobId) || null} onDelete={() => onDelete(l)} onEditInstall={(isAdmin || l.by === me) && onEditInstall ? () => onEditInstall(l) : null} />)}
+        : filtered.map((l, i) => <LogRow key={l.id ?? i} log={l} job={(installJobs || []).find(j => j.id === l.installJobId) || null} onDelete={(isAdmin || l.by === me) ? () => onDelete(l) : null} onEditInstall={(isAdmin || canSeeOrder(l, me, dealers)) && onEditInstall ? () => onEditInstall(l) : null} />)}
     </div>
   );
 }
