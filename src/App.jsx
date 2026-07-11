@@ -929,6 +929,32 @@ export default function App() {
     setLastOrder(withDocs);
     setModal("order-created");
   };
+  // Editing an already-placed order's line items (add/remove products, change
+  // quantities) — updates the SAME order record in place (same id, same PO/DO) rather
+  // than creating a second one, so the PO/DO PDFs (which read the order's current
+  // items live) immediately reflect the correction. Only the net stock difference
+  // between the old and new quantities is applied, not the new quantities outright —
+  // otherwise re-saving an unchanged order would double-deduct stock.
+  const updateOrderItems = (order, newItems, notes, photo) => {
+    const oldItems = order.items && order.items.length ? order.items : [{ product: order.product, sold: order.sold, returned: order.returned }];
+    const netFor = (items, nameLower) => items
+      .filter(it => it.product && it.product.toLowerCase() === nameLower)
+      .reduce((s, it) => s + (Number(it.sold) || 0) - (Number(it.returned) || 0), 0);
+    const productNames = new Set([...oldItems, ...newItems].map(it => it.product).filter(Boolean).map(n => n.toLowerCase()));
+    setProducts(ps => ps.map(p => {
+      const nameLower = p.name.toLowerCase();
+      if (!productNames.has(nameLower)) return p;
+      const delta = netFor(newItems, nameLower) - netFor(oldItems, nameLower);
+      if (!delta) return p;
+      return { ...p, stockDispatch: (Number(p.stockDispatch) || 0) - delta };
+    }));
+    setLogs(logs.map(l => l.id === order.id ? {
+      ...l, items: newItems, notes, photo,
+      product: newItems[0]?.product, price: newItems[0]?.price,
+      sold: newItems[0]?.sold, returned: newItems[0]?.returned, exchanged: newItems[0]?.exchanged,
+    } : l));
+    setModal(null);
+  };
   // Attaching/editing the installation job linked to an existing order (from Orders'
   // "Edit Installation" action). If the order has no linked job yet, this creates one
   // now — sharing the order's PO/DO — and marks the order as Delivery & Installation;
@@ -1235,7 +1261,7 @@ export default function App() {
           </div>
 
           {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("inventory")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
-          {page === "daily" && <DailyPage logs={logs} installJobs={installJobs} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} onEditInstall={l => { setEditInstallJob(installJobs.find(j => j.id === l.installJobId) || null); setEditOrderLog(l); setModal("install-job"); }} />}
+          {page === "daily" && <DailyPage logs={logs} installJobs={installJobs} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} onEditInstall={l => { setEditInstallJob(installJobs.find(j => j.id === l.installJobId) || null); setEditOrderLog(l); setModal("install-job"); }} onEditItems={l => { setEditOrderLog(l); setModal("edit-order-items"); }} />}
           {page === "damage" && <DamagePage damages={damages} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} onSendReplacement={sendReplacement} onActivateServicing={activateServicing} onReject={rejectDamage} onMarkServicingDone={markServicingDone} />}
           {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} onDelete={deleteDoc} />}
           {page === "reports" && <ReportsPage logs={logs} />}
@@ -1264,6 +1290,7 @@ export default function App() {
         onSave={payload => editInstallJob ? updateInstallJob(editInstallJob.id, payload) : saveOrderInstallJob(editOrderLog, payload)}
         onClose={closeModal}
       />}
+      {modal === "edit-order-items" && editOrderLog && <EditOrderModal order={editOrderLog} products={products} onSave={(items, notes, photo) => updateOrderItems(editOrderLog, items, notes, photo)} onClose={closeModal} />}
       {modal === "claim" && <ClaimModal user={user} dealers={dealers} onSave={submitClaim} onClose={closeModal} />}
       {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={closeModal} />}
       {modal === "dealer" && <DealerModal edit={editDealer} dealers={dealers} setDealers={setDealers} users={users} isAdmin={isAdmin} me={user.name} onClose={closeModal} />}
@@ -1865,7 +1892,7 @@ function SalesCalendar({ logs, isAdmin }) {
 }
 
 // ── DAILY LOG ─────────────────────────────────────────────────────────────────
-function DailyPage({ logs, installJobs, dealers, me, isAdmin, onAdd, onDelete, onEditInstall }) {
+function DailyPage({ logs, installJobs, dealers, me, isAdmin, onAdd, onDelete, onEditInstall, onEditItems }) {
   const [filterDate, setFilterDate] = useState(todayISO());
   const mine = isAdmin ? logs : logs.filter(l => canSeeOrder(l, me, dealers));
   const filtered = filterDate ? mine.filter(l => l.dateISO === filterDate) : mine;
@@ -1893,12 +1920,12 @@ function DailyPage({ logs, installJobs, dealers, me, isAdmin, onAdd, onDelete, o
       </div>
       <div className="section-hdr"><div className="section-title">Orders ({filtered.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Order</button></div>
       {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📝</div><div className="empty-lbl">No orders for this date.</div></div>
-        : filtered.map((l, i) => <LogRow key={l.id ?? i} log={l} job={(installJobs || []).find(j => j.id === l.installJobId) || null} onDelete={(isAdmin || l.by === me) ? () => onDelete(l) : null} onEditInstall={(isAdmin || canSeeOrder(l, me, dealers)) && onEditInstall ? () => onEditInstall(l) : null} />)}
+        : filtered.map((l, i) => <LogRow key={l.id ?? i} log={l} job={(installJobs || []).find(j => j.id === l.installJobId) || null} onDelete={(isAdmin || l.by === me) ? () => onDelete(l) : null} onEditInstall={(isAdmin || canSeeOrder(l, me, dealers)) && onEditInstall ? () => onEditInstall(l) : null} onEditItems={(isAdmin || l.by === me) && onEditItems ? () => onEditItems(l) : null} />)}
     </div>
   );
 }
 
-function LogRow({ log, job, onDelete, onEditInstall }) {
+function LogRow({ log, job, onDelete, onEditInstall, onEditItems }) {
   const items = log.items && log.items.length ? log.items : null;
   const multi = items && items.length > 1;
   const [showJob, setShowJob] = useState(false);
@@ -1943,7 +1970,7 @@ function LogRow({ log, job, onDelete, onEditInstall }) {
         </div>
       )}
       {job && showJob && <InstallJobCard j={job} onEdit={onEditInstall} />}
-      {(log.product || onDelete || onEditInstall) && (
+      {(log.product || onDelete || onEditInstall || onEditItems) && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {log.product && <>
             <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "PO")}>⬇ PO</button>
@@ -1951,6 +1978,7 @@ function LogRow({ log, job, onDelete, onEditInstall }) {
             <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "DO")}>⬇ DO</button>
             <button className="btn btn-ghost btn-xs" onClick={() => printDoc(log, "DO")}>🖨 DO</button>
           </>}
+          {onEditItems && <button className="btn btn-ghost btn-xs" onClick={onEditItems}>✎ Edit Order</button>}
           {onEditInstall && <button className="btn btn-ghost btn-xs" onClick={onEditInstall}>{job ? `✎ Edit ${job.type === "delivery" ? "Delivery" : "Installation"}` : "+ Add Installation"}</button>}
           {onDelete && <button className="btn btn-danger btn-xs" onClick={onDelete}>🗑 Delete</button>}
         </div>
@@ -4021,6 +4049,66 @@ function LogModal({ user, isAdmin, dealers, products, installers, salespeople, o
       </div>
       {err && <div className="login-err">{err}</div>}
       <div className="modal-actions"><button className="btn btn-primary" style={{flex:1}} onClick={save}>Create Order</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+// Edits an already-placed order's line items in place (add/remove products, change
+// quantities) — same order, same PO/DO, so the documents immediately reflect the
+// correction instead of a second order being created alongside the original.
+function EditOrderModal({ order, products, onSave, onClose }) {
+  const seedRows = order.items && order.items.length
+    ? order.items.map(it => ({ product: it.product, delivered: String(it.sold ?? ""), returned: String(it.returned ?? ""), exchanged: String(it.exchanged ?? "") }))
+    : [{ product: order.product || "", delivered: String(order.sold ?? ""), returned: String(order.returned ?? ""), exchanged: String(order.exchanged ?? "") }];
+  const [rows, setRows] = useState(seedRows);
+  const [notes, setNotes] = useState(order.notes || "");
+  const [photo, setPhoto] = useState(order.photo || null);
+  const [err, setErr] = useState("");
+  const hp = e => handlePhoto(e, setPhoto);
+  const priceFor = name => Number(products.find(p => p.name === name)?.price) || 0;
+  const setRow = (i, field, val) => setRows(rows.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+  const addRow = () => setRows([...rows, { product: "", delivered: "", returned: "", exchanged: "" }]);
+  const removeRow = i => setRows(rows.filter((_, idx) => idx !== i));
+  const amount = rows.reduce((s, r) => s + priceFor(r.product) * (Number(r.delivered) || 0), 0);
+  const save = () => {
+    const items = rows.filter(r => r.product && (Number(r.delivered) || Number(r.returned) || Number(r.exchanged)))
+      .map(r => ({ product: r.product, price: priceFor(r.product), sold: Number(r.delivered) || 0, returned: Number(r.returned) || 0, exchanged: Number(r.exchanged) || 0 }));
+    if (items.length === 0) { setErr("Add at least one product with a delivered, returned or exchanged quantity."); return; }
+    onSave(items, notes, photo);
+  };
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-handle" /><div className="modal-title">Edit Order</div>
+      <div className="card-sub" style={{ marginBottom: 4 }}>{order.dealer} · {order.poNo} · {order.doNo}</div>
+      <div style={{ fontSize: 11, color: "#8A8073", marginBottom: 4 }}>Add or remove products, or change quantities. The PO and DO will reflect these changes.</div>
+      {rows.map((r, i) => (
+        <div key={i} style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 10px 4px", marginBottom: 2 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div className="field-label">Product {rows.length > 1 ? i + 1 : ""}</div>
+            {rows.length > 1 && <button className="btn btn-danger btn-xs" onClick={() => removeRow(i)}>✕ Remove</button>}
+          </div>
+          <select className="field-select" value={r.product} onChange={e => setRow(i, "product", e.target.value)}>
+            <option value="">Select a product…</option>
+            {products.map(p => <option key={p.id} value={p.name}>{p.name}{p.price ? ` — $${p.price}` : ""}</option>)}
+          </select>
+          <div className="input-row-3">
+            <div className="form-group"><div className="field-label">Delivered</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={r.delivered} onChange={e => setRow(i, "delivered", e.target.value)} /></div>
+            <div className="form-group"><div className="field-label">Returned</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={r.returned} onChange={e => setRow(i, "returned", e.target.value)} /></div>
+            <div className="form-group"><div className="field-label">Exchanged</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={r.exchanged} onChange={e => setRow(i, "exchanged", e.target.value)} /></div>
+          </div>
+        </div>
+      ))}
+      <button className="btn btn-ghost btn-xs" style={{ alignSelf: "flex-start" }} onClick={addRow}>+ Add Product</button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11.5, color: "#8A8073" }}>
+        <span>Returned = damage · Exchanged = wrong size</span>
+        {amount > 0 && <span style={{ fontWeight: 700, color: "#221E1A" }}>Amount ${amount.toLocaleString("en-SG", { minimumFractionDigits: 2 })}</span>}
+      </div>
+      <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="Any remarks..." value={notes} onChange={e => setNotes(e.target.value)} /></div>
+      <div className="form-group"><div className="field-label">Photo (optional)</div>
+        <div className="photo-zone"><input type="file" accept="image/*" capture="environment" onChange={hp} />{photo ? <img src={photo} alt="p" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">Tap to upload photo</div></>}</div>
+      </div>
+      {err && <div className="login-err">{err}</div>}
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save Changes</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
     </div></div>
   );
 }
