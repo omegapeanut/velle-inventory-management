@@ -1047,8 +1047,7 @@ export default function App() {
     // job is done — installers don't see the Dashboard, so this reaches exactly the
     // people who need to know.
     if (job) {
-      const isServicing = job.type === "servicing";
-      const label = isServicing ? "Servicing" : "Installation";
+      const label = job.type === "servicing" ? "Servicing" : job.type === "delivery" ? "Delivery" : "Installation";
       const what = installedProduct === "NIL" ? (completionNotes || "issue resolved") : `${installedQty} × ${installedProduct}`;
       setNotices([{
         id: Date.now(),
@@ -1059,8 +1058,10 @@ export default function App() {
       // Bill for the completed job straight away — to its dealer if it has one,
       // otherwise to the jobsite address — rather than waiting on the monthly cycle,
       // which only ever picks up dealer sales orders, not installer job completions.
-      // Skipped for NIL-product servicing visits (no charge, nothing to bill).
-      if (installedProduct !== "NIL") {
+      // Skipped for NIL-product servicing visits (no charge, nothing to bill) and for
+      // pure delivery jobs (the order itself is already the billable event — the
+      // delivery team is just moving already-paid-for goods, not a separate service).
+      if (installedProduct !== "NIL" && job.type !== "delivery") {
         const invoice = buildJobInvoice({ ...job, installedProduct, installedQty, price: installedPrice }, job.installer, dealers);
         setInvoices([invoice, ...invoices]);
       }
@@ -1252,7 +1253,7 @@ export default function App() {
         </div>
       </div>
 
-      {modal === "log" && <LogModal user={user} isAdmin={isAdmin} dealers={dealers} products={products} installers={users.filter(u => u.role === "installer")} onSave={handlePurchase} onClose={closeModal} />}
+      {modal === "log" && <LogModal user={user} isAdmin={isAdmin} dealers={dealers} products={products} installers={users.filter(u => u.role === "installer")} salespeople={users.filter(u => u.role === "salesperson")} onSave={handlePurchase} onClose={closeModal} />}
       {modal === "order-created" && lastOrder && <OrderCreatedModal order={lastOrder} onClose={closeModal} />}
       {modal === "damage" && <DamageModal user={user} products={products} dealers={dealers} onSave={e => { setDamages([{ id: Date.now(), ...e }, ...damages]); setModal(null); }} onClose={closeModal} />}
       {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([{ id: Date.now(), ...e }, ...docs]); setModal(null); }} onClose={closeModal} />}
@@ -1931,10 +1932,10 @@ function LogRow({ log, job, onDelete, onEditInstall }) {
       )}
       {log.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{log.notes}</div>}
       {log.photo && <img src={log.photo} alt="entry" className="photo-preview" />}
-      {log.deliveryType === "installation" && (
+      {(log.deliveryType === "installation" || job) && (
         <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A" }}>🛠️ Delivery & Installation</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A" }}>{job?.type === "delivery" ? "🚚 Delivery Team" : "🛠️ Delivery & Installation"}</div>
             {job && <span className={`badge badge-${job.status}`}>{JOB_STATUS_LABEL[job.status]}</span>}
           </div>
           <div style={{ fontSize: 12, color: "#8A8073" }}>{log.installer || "No installer assigned yet"}{job?.address ? ` · ${job.address}` : ""}</div>
@@ -1950,7 +1951,7 @@ function LogRow({ log, job, onDelete, onEditInstall }) {
             <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "DO")}>⬇ DO</button>
             <button className="btn btn-ghost btn-xs" onClick={() => printDoc(log, "DO")}>🖨 DO</button>
           </>}
-          {onEditInstall && <button className="btn btn-ghost btn-xs" onClick={onEditInstall}>{job ? "✎ Edit Installation" : "+ Add Installation"}</button>}
+          {onEditInstall && <button className="btn btn-ghost btn-xs" onClick={onEditInstall}>{job ? `✎ Edit ${job.type === "delivery" ? "Delivery" : "Installation"}` : "+ Add Installation"}</button>}
           {onDelete && <button className="btn btn-danger btn-xs" onClick={onDelete}>🗑 Delete</button>}
         </div>
       )}
@@ -3045,6 +3046,8 @@ function DrawConfirmForm({ job, products, onDraw }) {
 // item/qty combo counts — the rest of what was drawn auto-returns to Dispatch).
 function CompleteInstallForm({ job, onComplete }) {
   const isNil = job.product === "NIL";
+  const isDelivery = job.type === "delivery";
+  const verb = isDelivery ? "delivered" : "installed";
   const options = job.drawnItems || [];
   const [product, setProduct] = useState(options[0]?.product || "");
   const [qty, setQty] = useState(String(options[0]?.qty || 1));
@@ -3058,29 +3061,29 @@ function CompleteInstallForm({ job, onComplete }) {
   const returned = options.map(o => o.product === product ? { product: o.product, qty: o.qty - (Number(qty) || 0) } : { ...o }).filter(o => o.qty > 0);
   const submit = () => {
     if (isNil) { onComplete(job.id, "NIL", 0, installedPhoto, [], null, notes); return; }
-    if (!product || !qty || Number(qty) <= 0) { setErr("Select the installed product and quantity."); return; }
-    if (Number(qty) > maxQty) { setErr(`Can't install more than the ${maxQty} drawn.`); return; }
+    if (!product || !qty || Number(qty) <= 0) { setErr(`Select the ${verb} product and quantity.`); return; }
+    if (Number(qty) > maxQty) { setErr(`Can't mark more than the ${maxQty} drawn as ${verb}.`); return; }
     onComplete(job.id, product, Number(qty), installedPhoto, returned, returnPhoto, notes);
   };
   return (
     <>
-      <div className="field-label" style={{ marginTop: 4 }}>Step 3 — Confirm {isNil ? "servicing outcome" : "what was installed"}</div>
+      <div className="field-label" style={{ marginTop: 4 }}>Step 3 — Confirm {isNil ? "servicing outcome" : `what was ${verb}`}</div>
       {isNil ? (
         <div className="form-group"><div className="field-label">What was done</div><input className="field-input" placeholder="e.g. Re-sealed the base, no parts replaced" value={notes} onChange={e => setNotes(e.target.value)} /></div>
       ) : (
         <div className="input-row-2">
-          <div className="form-group"><div className="field-label">Installed Product</div>
+          <div className="form-group"><div className="field-label">{isDelivery ? "Delivered Product" : "Installed Product"}</div>
             <select className="field-select" value={product} onChange={e => setProduct(e.target.value)}>
               {options.map((o, i) => <option key={i} value={o.product}>{o.product}</option>)}
             </select>
           </div>
-          <div className="form-group"><div className="field-label">Qty Installed</div><input className="field-input" type="number" inputMode="numeric" value={qty} onChange={e => setQty(e.target.value)} /></div>
+          <div className="form-group"><div className="field-label">{isDelivery ? "Qty Delivered" : "Qty Installed"}</div><input className="field-input" type="number" inputMode="numeric" value={qty} onChange={e => setQty(e.target.value)} /></div>
         </div>
       )}
-      <div className="field-label">{isNil ? "Photo (optional)" : "Installed Photo (optional)"}</div>
+      <div className="field-label">{isNil ? "Photo (optional)" : `${isDelivery ? "Delivery" : "Installed"} Photo (optional)`}</div>
       <div className="photo-zone">
         <input type="file" accept="image/*" capture="environment" onChange={hpInstalled} />
-        {installedPhoto ? <img src={installedPhoto} alt="installed" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">{isNil ? "Tap to photograph the fix" : "Tap to photograph the installed product"}</div></>}
+        {installedPhoto ? <img src={installedPhoto} alt="installed" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">{isNil ? "Tap to photograph the fix" : `Tap to photograph the ${verb} product`}</div></>}
       </div>
       {!isNil && returned.length > 0 && (
         <>
@@ -3096,7 +3099,7 @@ function CompleteInstallForm({ job, onComplete }) {
         </>
       )}
       {err && <div className="login-err">{err}</div>}
-      <button className="btn btn-primary btn-sm" onClick={submit}>{isNil ? "✓ Complete Servicing" : "✓ Complete Installation"}</button>
+      <button className="btn btn-primary btn-sm" onClick={submit}>{isNil ? "✓ Complete Servicing" : `✓ Complete ${isDelivery ? "Delivery" : "Installation"}`}</button>
     </>
   );
 }
@@ -3122,7 +3125,7 @@ function InstallerJobsPage({ jobs, products, me, onAccept, onDraw, onArrivalPhot
       {active.length > 0 && <div className="section-title" style={{ marginTop: 8 }}>Active Jobs ({active.length})</div>}
       {active.map(j => (
         <div className="list-item" key={j.id}>
-          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.type === "servicing" ? (j.product === "NIL" ? "Servicing — Site Visit" : `Servicing — ${j.product}`) : j.product}</div><span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span></div>
+          <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>{j.type === "servicing" ? (j.product === "NIL" ? "Servicing — Site Visit" : `Servicing — ${j.product}`) : j.type === "delivery" ? `Delivery — ${j.product}` : j.product}</div><span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span></div>
           {j.product !== "NIL" && <div style={{ fontSize: 13, fontWeight: 500 }}>To draw: {j.qty} × {j.product}</div>}
           {j.dealer && <div style={{ fontSize: 12, color: "#8A8073" }}>🤝 Dealer: {j.dealer}</div>}
           <div style={{ fontSize: 12, color: "#8A8073" }}>📍 Jobsite: {j.address}</div>
@@ -3842,12 +3845,14 @@ function SettingsPage({ settings, setSettings, counters, setCounters, invoices, 
 }
 
 // ── MODALS ────────────────────────────────────────────────────────────────────
-function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClose }) {
+function LogModal({ user, isAdmin, dealers, products, installers, salespeople, onSave, onClose }) {
   const [dealer,setDealer]=useState("");
+  const [salesperson, setSalesperson] = useState(""); // admin-only override of who this one order is attributed to
   const [rows,setRows]=useState([{ product: "", delivered: "", returned: "", exchanged: "" }]);
   const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
   const [dateISO,setDateISO]=useState(todayISO());
   const [deliveryType, setDeliveryType] = useState("delivery"); // "delivery" | "installation"
+  const [assignDeliveryTeam, setAssignDeliveryTeam] = useState(false); // delivery-only: optional dispatch, no install
   const [address, setAddress] = useState("");
   const [installer,setInstaller]=useState("");
   const [installProduct, setInstallProduct] = useState("");
@@ -3865,16 +3870,20 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
   const addRow = () => setRows([...rows, { product: "", delivered: "", returned: "", exchanged: "" }]);
   const removeRow = i => setRows(rows.filter((_, idx) => idx !== i));
   const amount = rows.reduce((s, r) => s + priceFor(r.product) * (Number(r.delivered)||0), 0);
-  // Only rows that actually got delivered units can be picked as "what to install".
+  // Only rows that actually got delivered units can be picked as "what to install"/"what to deliver".
   const installCandidates = rows.filter(r => r.product && Number(r.delivered) > 0);
-  const chooseDeliveryAndInstall = () => {
-    setDeliveryType("installation");
+  const prefillJobProduct = () => {
     if (!installProduct && installCandidates[0]) { setInstallProduct(installCandidates[0].product); setInstallQty(installCandidates[0].delivered); }
   };
+  const chooseDeliveryAndInstall = () => { setDeliveryType("installation"); prefillJobProduct(); };
+  const toggleAssignDeliveryTeam = checked => { setAssignDeliveryTeam(checked); if (checked) prefillJobProduct(); };
   const setDealerAndPrefillAddress = val => {
     setDealer(val);
     if (!address) setAddress(dealers.find(d => d.name === val)?.address || "");
+    if (!salesperson) setSalesperson(dealers.find(d => d.name === val)?.salesperson || "");
   };
+  // A job gets dispatched whenever installation is chosen, or (delivery-only) admin opts to assign a delivery team.
+  const wantsJob = deliveryType === "installation" || (deliveryType === "delivery" && assignDeliveryTeam);
   const save=()=>{
     if(!dealer){ setErr("Please select a dealer."); return; }
     const items = rows.filter(r => r.product && (Number(r.delivered) || Number(r.returned) || Number(r.exchanged)))
@@ -3883,11 +3892,12 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
     if(!dateISO){ setErr("Please select a date."); return; }
     if(!address.trim()){ setErr("Please enter the delivery address."); return; }
     let installJob;
-    if (deliveryType === "installation") {
-      if (!installer) { setErr("Select an installer for this delivery & installation order."); return; }
-      if (!installProduct || !installQty || Number(installQty) <= 0) { setErr("Select what's being installed and the quantity."); return; }
-      if (!installDateISO || !installTimeFrom || !installTimeTo) { setErr("Fill in the installation date/time."); return; }
+    if (wantsJob) {
+      if (!installer) { setErr(deliveryType === "installation" ? "Select an installer for this delivery & installation order." : "Select a delivery team, or untick Assign Delivery Team."); return; }
+      if (!installProduct || !installQty || Number(installQty) <= 0) { setErr(`Select what's being ${deliveryType === "installation" ? "installed" : "delivered"} and the quantity.`); return; }
+      if (!installDateISO || !installTimeFrom || !installTimeTo) { setErr("Fill in the date/time."); return; }
       installJob = {
+        type: deliveryType === "installation" ? "installation" : "delivery",
         product: installProduct, qty: Number(installQty) || 0, collectWarehouse: installCollectWarehouse,
         address, collectPoint: installCollectPoint,
         date: fmtDate(new Date(installDateISO + "T00:00:00")), dateISO: installDateISO,
@@ -3902,8 +3912,9 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
       // reflects the first line item; downstream PDF/billing logic reads `items` directly.
       product: items[0].product, price: items[0].price, sold: items[0].sold, returned: items[0].returned, exchanged: items[0].exchanged,
       dealerPhone: dealerRec?.contactPhone || "", dealerEmail: dealerRec?.contactEmail || "",
-      notes, photo, by:user.name, date:fmtDate(new Date(dateISO+"T00:00:00")), dateISO, time:fmtTime(),
-      deliveryType, installer: deliveryType === "installation" ? installer : "", installJob,
+      notes, photo, by: (isAdmin && salesperson) ? salesperson : user.name,
+      date:fmtDate(new Date(dateISO+"T00:00:00")), dateISO, time:fmtTime(),
+      deliveryType, installer: wantsJob ? installer : "", installJob,
     });
   };
   return (
@@ -3918,6 +3929,15 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
           {dealers.map(d=><option key={d.id} value={d.name}>{d.name}</option>)}
         </select>
       </div>
+      {isAdmin && (
+        <div className="form-group"><div className="field-label">Salesperson</div>
+          <select className="field-select" value={salesperson} onChange={e=>setSalesperson(e.target.value)}>
+            <option value="">{dealer ? "Use dealer's assigned salesperson" : "Select a salesperson…"}</option>
+            {salespeople.map(s=><option key={s.id} value={s.name}>{s.name}</option>)}
+          </select>
+          <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>Overrides who this one order is credited to — just for this order, doesn't change the dealer's assigned salesperson.</div>
+        </div>
+      )}
       {rows.map((r, i) => (
         <div key={i} style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 10px 4px", marginBottom: 2 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -3951,9 +3971,15 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
         </label>
       </div>
       <div className="form-group"><div className="field-label">{deliveryType === "installation" ? "Jobsite Address" : "Delivery Address"}</div><input className="field-input" placeholder="Full address" value={address} onChange={e=>setAddress(e.target.value)}/></div>
-      {deliveryType === "installation" && (
+      {deliveryType === "delivery" && (
+        <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+          <input type="checkbox" checked={assignDeliveryTeam} onChange={e=>toggleAssignDeliveryTeam(e.target.checked)}/>
+          Assign Delivery Team
+        </label>
+      )}
+      {wantsJob && (
         <div style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 10px 4px" }}>
-          <div className="form-group"><div className="field-label">What's being installed</div>
+          <div className="form-group"><div className="field-label">{deliveryType === "installation" ? "What's being installed" : "What to Deliver"}</div>
             <select className="field-select" value={installProduct} onChange={e => {
               setInstallProduct(e.target.value);
               const match = installCandidates.find(r => r.product === e.target.value);
@@ -3965,7 +3991,7 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
             {installCandidates.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>Enter a delivered quantity above first.</div>}
           </div>
           <div className="input-row-2">
-            <div className="form-group"><div className="field-label">Qty to Install</div><input className="field-input" type="number" inputMode="numeric" value={installQty} onChange={e=>setInstallQty(e.target.value)}/></div>
+            <div className="form-group"><div className="field-label">{deliveryType === "installation" ? "Qty to Install" : "Qty to Deliver"}</div><input className="field-input" type="number" inputMode="numeric" value={installQty} onChange={e=>setInstallQty(e.target.value)}/></div>
             <div className="form-group"><div className="field-label">Collect From</div>
               <select className="field-select" value={installCollectWarehouse} onChange={e=>setInstallCollectWarehouse(e.target.value)}>
                 <option value="dispatch">{WAREHOUSE_LABEL.dispatch}</option>
@@ -3973,9 +3999,9 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
               </select>
             </div>
           </div>
-          <div className="form-group"><div className="field-label">Assign Installer</div>
+          <div className="form-group"><div className="field-label">{deliveryType === "installation" ? "Assign Installer" : "Assign Delivery Team"}</div>
             <select className="field-select" value={installer} onChange={e=>setInstaller(e.target.value)}>
-              <option value="">Select an installer…</option>
+              <option value="">{deliveryType === "installation" ? "Select an installer…" : "Select a delivery team…"}</option>
               {installers.map(i=><option key={i.id} value={i.name}>{i.name}</option>)}
             </select>
             {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installers yet — add one in the Installers page first.</div>}
@@ -3986,7 +4012,7 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
             <div className="form-group"><div className="field-label">From</div><input className="field-input" type="time" value={installTimeFrom} onChange={e=>setInstallTimeFrom(e.target.value)}/></div>
             <div className="form-group"><div className="field-label">To</div><input className="field-input" type="time" value={installTimeTo} onChange={e=>setInstallTimeTo(e.target.value)}/></div>
           </div>
-          <div className="form-group"><div className="field-label">Notes for Installer</div><input className="field-input" placeholder="Optional" value={installNotes} onChange={e=>setInstallNotes(e.target.value)}/></div>
+          <div className="form-group"><div className="field-label">{deliveryType === "installation" ? "Notes for Installer" : "Notes for Delivery Team"}</div><input className="field-input" placeholder="Optional" value={installNotes} onChange={e=>setInstallNotes(e.target.value)}/></div>
         </div>
       )}
       <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="Any remarks..." value={notes} onChange={e=>setNotes(e.target.value)}/></div>
