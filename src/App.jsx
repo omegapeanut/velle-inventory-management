@@ -847,7 +847,8 @@ export default function App() {
     setProducts(products.map(p => p.name === job.product ? { ...p, [stockField]: (Number(p[stockField]) || 0) - items[0].qty } : p));
     setInstallJobs(installJobs.map(j => j.id === jobId ? { ...j, status: "drawn", drawnItems: items, drawPhoto: photoUrl, extraPhotos: extraPhotos || [], drawNotes: notes || "", drawnAt: new Date().toISOString() } : j));
   };
-  // Arrival photo: captures the unit number, timestamp and (if permitted) GPS location.
+  // Arrival: captures timestamp and (if permitted) GPS location. Photo of the unit
+  // number is optional — installer can skip straight to "arrived" without one.
   const captureArrivalJobPhoto = async (jobId, file) => {
     const finish = (photoUrl, coords) => setInstallJobs(jobs => jobs.map(j => j.id === jobId ? {
       ...j, status: "arrived", arrivalPhoto: photoUrl,
@@ -857,6 +858,7 @@ export default function App() {
       if (navigator.geolocation) navigator.geolocation.getCurrentPosition(pos => finish(photoUrl, pos.coords), () => finish(photoUrl, null), { timeout: 8000, enableHighAccuracy: true });
       else finish(photoUrl, null);
     };
+    if (!file) { withPhoto(null); return; }
     const compressed = await compressImage(file);
     if (isCloudinaryConfigured) uploadImage(compressed).then(withPhoto).catch(() => { const r = new FileReader(); r.onload = ev => withPhoto(ev.target.result); r.readAsDataURL(compressed); });
     else { const r = new FileReader(); r.onload = ev => withPhoto(ev.target.result); r.readAsDataURL(compressed); }
@@ -864,7 +866,8 @@ export default function App() {
   // Complete the job: confirm which drawn item (and how many) was actually installed,
   // work out what's left over, and return that to the SAME warehouse it was drawn from.
   // The job's product/qty/price are overwritten to the installed item so its PO/DO
-  // reflect only that — never the extra units that went unused.
+  // reflect only that — never the extra units that went unused. Photos are optional
+  // throughout — completion isn't blocked on having taken one.
   const completeInstallJob = (jobId, installedProduct, installedQty, installedPhotoUrl, returnedItems, returnPhotoUrl) => {
     const job = installJobs.find(j => j.id === jobId);
     const stockField = job?.collectWarehouse === "main" ? "stockMain" : "stockDispatch";
@@ -884,6 +887,17 @@ export default function App() {
         returnedItems, returnPhoto: returnPhotoUrl, returnedAt: new Date().toISOString(),
       };
     }));
+    // Notify Admin and the relevant salesperson (via the shared Notice Board) that this
+    // installation is done — installers don't see the Dashboard, so this reaches exactly
+    // the people who need to know.
+    if (job) {
+      setNotices([{
+        id: Date.now(),
+        title: `Installation completed — ${installedProduct}`,
+        message: `${job.installer} completed ${installedQty} × ${installedProduct} at ${job.address}${job.dealer ? ` (${job.dealer})` : ""}. ${job.poNo} · ${job.doNo}.`,
+        by: job.installer, date: todayStr(), dateISO: todayISO(), ackBy: [],
+      }, ...notices]);
+    }
   };
 
   if (!user) return <LoginScreen users={users} onLogin={u => { setUser(u); setPage(u.role === "installer" ? "install-jobs-mine" : "dashboard"); }} />;
@@ -2397,67 +2411,79 @@ function TrashPage({ trash, me, isAdmin, isSuperAdmin, onRestore, onPermanentDel
 }
 
 // ── INSTALLATION JOBS ──────────────────────────────────────────────────────────
+function InstallJobCard({ j, onEdit }) {
+  return (
+    <div className="list-item">
+      <div className="item-meta">
+        <div><div style={{ fontSize: 14, fontWeight: 700 }}>{j.product}</div><div style={{ fontSize: 11, color: "#8A8073" }}>Qty {j.qty} · {j.poNo} / {j.doNo}</div></div>
+        <span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span>
+      </div>
+      {j.dealer && <div style={{ fontSize: 12, color: "#8A8073" }}>🤝 Dealer: {j.dealer}</div>}
+      <div style={{ fontSize: 12, color: "#8A8073" }}>🏬 Collect from: {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
+      <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {j.address}</div>
+      <div style={{ fontSize: 12, color: "#8A8073" }}>📦 Collect: {j.collectPoint || "—"}</div>
+      <div style={{ fontSize: 12, color: "#8A8073" }}>🗓 {j.date} · {fmt12h(j.timeFrom)}–{fmt12h(j.timeTo)}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#9A7B4E" }}>Installer: {j.installer}</div>
+      {j.notesForInstaller && <div style={{ fontSize: 12, color: "#8A8073", fontStyle: "italic" }}>Note: {j.notesForInstaller}</div>}
+      {["pending", "accepted"].includes(j.status) && <button className="btn btn-ghost btn-xs" style={{ alignSelf: "flex-start" }} onClick={() => onEdit(j)}>✎ Edit Job</button>}
+
+      {j.drawnItems && j.drawnItems.length > 0 && (
+        <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Drawn from {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
+          {j.drawnItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
+          {j.drawNotes && <div style={{ fontSize: 11, color: "#8A8073", fontStyle: "italic", marginTop: 4 }}>"{j.drawNotes}"</div>}
+          {j.drawPhoto ? <img src={j.drawPhoto} alt="drawn items" className="photo-preview" style={{ marginTop: 6 }} /> : <div style={{ fontSize: 11, color: "#8A8073", fontStyle: "italic", marginTop: 4 }}>No photo taken</div>}
+          {j.extraPhotos && j.extraPhotos.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+              {j.extraPhotos.map((p, i) => <img key={i} src={p} alt="extra" className="photo-preview" style={{ width: 70, height: 70 }} />)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {j.arrivalMeta && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Arrival</div>
+          {j.arrivalPhoto ? <img src={j.arrivalPhoto} alt="arrival" className="photo-preview" /> : <div style={{ fontSize: 11, color: "#8A8073", fontStyle: "italic" }}>No photo taken</div>}
+          <div style={{ fontSize: 11, color: "#8A8073", marginTop: 4 }}>
+            Arrived {new Date(j.arrivalMeta.takenAt).toLocaleString("en-SG")}
+            {j.arrivalMeta.lat != null ? ` · ${j.arrivalMeta.lat.toFixed(5)}, ${j.arrivalMeta.lng.toFixed(5)}` : " · location unavailable"}
+          </div>
+        </div>
+      )}
+
+      {j.installedProduct && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Installed — {j.installedQty} × {j.installedProduct}</div>
+          {j.installedPhoto ? <img src={j.installedPhoto} alt="installed" className="photo-preview" /> : <div style={{ fontSize: 11, color: "#8A8073", fontStyle: "italic" }}>No photo taken</div>}
+        </div>
+      )}
+
+      {j.returnedItems && j.returnedItems.length > 0 && (
+        <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Returned to {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
+          {j.returnedItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
+          {j.returnPhoto && <img src={j.returnPhoto} alt="returned items" className="photo-preview" style={{ marginTop: 6 }} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InstallJobsPage({ jobs, onAdd, onEdit }) {
+  const [tab, setTab] = useState("active");
+  const active = jobs.filter(j => j.status !== "completed");
+  const completed = jobs.filter(j => j.status === "completed");
+  const list = tab === "active" ? active : completed;
   return (
     <div className="content">
       <div className="section-hdr"><div className="section-title">Installation Jobs ({jobs.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Job</button></div>
-      {jobs.length === 0 ? <div className="empty"><div className="empty-icon">🛠️</div><div className="empty-lbl">No installation jobs yet.</div></div>
-        : jobs.map(j => (
-          <div className="list-item" key={j.id}>
-            <div className="item-meta">
-              <div><div style={{ fontSize: 14, fontWeight: 700 }}>{j.product}</div><div style={{ fontSize: 11, color: "#8A8073" }}>Qty {j.qty} · {j.poNo} / {j.doNo}</div></div>
-              <span className={`badge badge-${j.status}`}>{JOB_STATUS_LABEL[j.status]}</span>
-            </div>
-            {j.dealer && <div style={{ fontSize: 12, color: "#8A8073" }}>🤝 Dealer: {j.dealer}</div>}
-            <div style={{ fontSize: 12, color: "#8A8073" }}>🏬 Collect from: {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
-            <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {j.address}</div>
-            <div style={{ fontSize: 12, color: "#8A8073" }}>📦 Collect: {j.collectPoint || "—"}</div>
-            <div style={{ fontSize: 12, color: "#8A8073" }}>🗓 {j.date} · {fmt12h(j.timeFrom)}–{fmt12h(j.timeTo)}</div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#9A7B4E" }}>Installer: {j.installer}</div>
-            {j.notesForInstaller && <div style={{ fontSize: 12, color: "#8A8073", fontStyle: "italic" }}>Note: {j.notesForInstaller}</div>}
-            {["pending", "accepted"].includes(j.status) && <button className="btn btn-ghost btn-xs" style={{ alignSelf: "flex-start" }} onClick={() => onEdit(j)}>✎ Edit Job</button>}
-
-            {j.drawnItems && j.drawnItems.length > 0 && (
-              <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Drawn from {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
-                {j.drawnItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
-                {j.drawNotes && <div style={{ fontSize: 11, color: "#8A8073", fontStyle: "italic", marginTop: 4 }}>"{j.drawNotes}"</div>}
-                {j.drawPhoto && <img src={j.drawPhoto} alt="drawn items" className="photo-preview" style={{ marginTop: 6 }} />}
-                {j.extraPhotos && j.extraPhotos.length > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-                    {j.extraPhotos.map((p, i) => <img key={i} src={p} alt="extra" className="photo-preview" style={{ width: 70, height: 70 }} />)}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {j.arrivalPhoto && (
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Arrival</div>
-                <img src={j.arrivalPhoto} alt="arrival" className="photo-preview" />
-                <div style={{ fontSize: 11, color: "#8A8073", marginTop: 4 }}>
-                  Arrived {new Date(j.arrivalMeta.takenAt).toLocaleString("en-SG")}
-                  {j.arrivalMeta.lat != null ? ` · ${j.arrivalMeta.lat.toFixed(5)}, ${j.arrivalMeta.lng.toFixed(5)}` : " · location unavailable"}
-                </div>
-              </div>
-            )}
-
-            {j.installedPhoto && (
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Installed — {j.installedQty} × {j.installedProduct}</div>
-                <img src={j.installedPhoto} alt="installed" className="photo-preview" />
-              </div>
-            )}
-
-            {j.returnedItems && j.returnedItems.length > 0 && (
-              <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Returned to {WAREHOUSE_LABEL[j.collectWarehouse || "dispatch"]}</div>
-                {j.returnedItems.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
-                {j.returnPhoto && <img src={j.returnPhoto} alt="returned items" className="photo-preview" style={{ marginTop: 6 }} />}
-              </div>
-            )}
-          </div>
-        ))}
+      <div className="page-tabs">
+        <button className={`btn btn-sm ${tab === "active" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("active")}>Active ({active.length})</button>
+        <button className={`btn btn-sm ${tab === "completed" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("completed")}>Completed ({completed.length})</button>
+      </div>
+      {list.length === 0 ? <div className="empty"><div className="empty-icon">🛠️</div><div className="empty-lbl">{tab === "active" ? "No active installation jobs." : "No completed jobs yet."}</div></div>
+        : list.map(j => <InstallJobCard key={j.id} j={j} onEdit={onEdit} />)}
     </div>
   );
 }
@@ -2546,7 +2572,6 @@ function DrawConfirmForm({ job, products, onDraw }) {
   const avail = products.find(p => p.name === job.product)?.[stockField] || 0;
   const confirm = () => {
     if (Number(job.qty) > avail) { setErr(`Only ${avail} of "${job.product}" available in ${WAREHOUSE_LABEL[warehouse]} — ask Admin to adjust the job.`); return; }
-    if (!photo) { setErr("Please photograph the items being drawn."); return; }
     onDraw(job.id, photo, extraPhotos, notes);
   };
   return (
@@ -2559,6 +2584,7 @@ function DrawConfirmForm({ job, products, onDraw }) {
         <div style={{ fontSize: 11, color: "#8A8073" }}>{WAREHOUSE_LABEL[warehouse]} — {avail} available</div>
         <div style={{ fontSize: 11, color: "#8A8073", fontStyle: "italic", marginTop: 4 }}>Need something different? Ask Admin to edit this job first.</div>
       </div>
+      <div className="field-label">Photo (optional)</div>
       <div className="photo-zone">
         <input type="file" accept="image/*" capture="environment" onChange={hp} />
         {photo ? <img src={photo} alt="drawn" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph what's being drawn</div></>}
@@ -2601,8 +2627,6 @@ function CompleteInstallForm({ job, onComplete }) {
   const submit = () => {
     if (!product || !qty || Number(qty) <= 0) { setErr("Select the installed product and quantity."); return; }
     if (Number(qty) > maxQty) { setErr(`Can't install more than the ${maxQty} drawn.`); return; }
-    if (!installedPhoto) { setErr("Please photograph the installed product."); return; }
-    if (returned.length > 0 && !returnPhoto) { setErr("Please photograph the item(s) being returned to Dispatch."); return; }
     onComplete(job.id, product, Number(qty), installedPhoto, returned, returnPhoto);
   };
   return (
@@ -2616,6 +2640,7 @@ function CompleteInstallForm({ job, onComplete }) {
         </div>
         <div className="form-group"><div className="field-label">Qty Installed</div><input className="field-input" type="number" inputMode="numeric" value={qty} onChange={e => setQty(e.target.value)} /></div>
       </div>
+      <div className="field-label">Installed Photo (optional)</div>
       <div className="photo-zone">
         <input type="file" accept="image/*" capture="environment" onChange={hpInstalled} />
         {installedPhoto ? <img src={installedPhoto} alt="installed" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the installed product</div></>}
@@ -2626,7 +2651,7 @@ function CompleteInstallForm({ job, onComplete }) {
             <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A", marginBottom: 4 }}>Will return to {WAREHOUSE_LABEL[job.collectWarehouse || "dispatch"]}:</div>
             {returned.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#8A8073" }}>{it.qty} × {it.product}</div>)}
           </div>
-          <div className="field-label">Return Photo</div>
+          <div className="field-label">Return Photo (optional)</div>
           <div className="photo-zone">
             <input type="file" accept="image/*" capture="environment" onChange={hpReturn} />
             {returnPhoto ? <img src={returnPhoto} alt="returned" className="photo-preview" /> : <><div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the returned item(s)</div></>}
@@ -2634,7 +2659,7 @@ function CompleteInstallForm({ job, onComplete }) {
         </>
       )}
       {err && <div className="login-err">{err}</div>}
-      <button className="btn btn-primary btn-sm" onClick={submit}>Complete Job</button>
+      <button className="btn btn-primary btn-sm" onClick={submit}>✓ Complete Installation</button>
     </>
   );
 }
@@ -2681,11 +2706,12 @@ function InstallerJobsPage({ jobs, products, me, onAccept, onDraw, onArrivalPhot
                   </div>
                 )}
               </div>
-              <div className="field-label" style={{ marginTop: 4 }}>Step 2 — Arrival photo (unit number)</div>
+              <div className="field-label" style={{ marginTop: 4 }}>Step 2 — Arrival (photo optional)</div>
               <div className="photo-zone">
                 <input type="file" accept="image/*" capture="environment" onChange={e => { const f = e.target.files[0]; if (f) onArrivalPhoto(j.id, f); }} />
                 <div className="photo-icon">📷</div><div className="photo-lbl">Tap to photograph the unit number — records time & location</div>
               </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => onArrivalPhoto(j.id, null)}>Skip Photo — Mark Arrived</button>
             </>
           )}
 
