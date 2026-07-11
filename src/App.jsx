@@ -645,6 +645,7 @@ const NAV = [
   { id: "trash", label: "Trash", icon: "🗑️", admin: false },
   { id: "reports", label: "Reports", icon: "📈", admin: true },
   { id: "dealers", label: "Dealers", icon: "🤝", admin: true },
+  { id: "installers", label: "Installers", icon: "👷", admin: true },
   { id: "inventory", label: "Inventory", icon: "🏬", admin: true },
   { id: "install-jobs", label: "Installation Jobs", icon: "🛠️", admin: true },
   { id: "targets", label: "Sales Targets", icon: "🎯", admin: true },
@@ -716,6 +717,8 @@ export default function App() {
   const [docType, setDocType] = useState("DO");
   const [editUser, setEditUser] = useState(null);
   const [dealers, setDealers] = usePersistentState("dealers", initDealers);
+  const [installers, setInstallers] = usePersistentState("installers", []);
+  const [editInstaller, setEditInstaller] = useState(null);
   const [products, setProducts] = usePersistentState("products", initProducts);
   const [transfers, setTransfers] = usePersistentState("transfers", []);
   const [editDealer, setEditDealer] = useState(null);
@@ -723,6 +726,7 @@ export default function App() {
   const [tasks, setTasks] = usePersistentState("tasks", initTasks);
   const [editTask, setEditTask] = useState(null);
   const [lastOrder, setLastOrder] = useState(null);
+  const [editOrderLog, setEditOrderLog] = useState(null);
   const [trash, setTrash] = usePersistentState("trash", []);
   const [notices, setNotices] = usePersistentState("notices", initNotices);
   const [companySettings, setCompanySettings] = usePersistentState("companySettings", DEFAULT_COMPANY_SETTINGS);
@@ -810,6 +814,12 @@ export default function App() {
     }
     setLastOrder(withDocs);
     setModal("order-created");
+  };
+  // Editing installation info on an existing order — doesn't touch sold/returned/stock,
+  // just whether installation is needed and which installer is assigned. Admin and the
+  // salesperson who created the order can both make this change after the fact.
+  const updateOrderInstallation = (logId, { installationNeeded, installer }) => {
+    setLogs(logs.map(l => l.id === logId ? { ...l, installationNeeded, installer } : l));
   };
 
   // ── WAREHOUSE TRANSFER (Main → Dispatch) ──
@@ -928,12 +938,12 @@ export default function App() {
   const loadTestData = () => {
     setUsers(initUsers);
     setLogs(seedLogs); setDamages(seedDamages); setDocs(seedDocs);
-    setDealers(initDealers); setProducts(initProducts); setTasks(initTasks);
+    setDealers(initDealers); setInstallers([]); setProducts(initProducts); setTasks(initTasks);
     setTrash([]); setNotices(initNotices); setInstallJobs(seedInstallJobs); setTargets(initTargets); setClaims(seedClaims);
     setSupplierPayments(seedSupplierPayments); setInvoices(seedInvoices); setTransfers([]); setStockIns([]);
   };
   const clearAllData = () => {
-    setLogs([]); setDamages([]); setDocs([]); setDealers([]); setProducts([]); setTasks([]);
+    setLogs([]); setDamages([]); setDocs([]); setDealers([]); setInstallers([]); setProducts([]); setTasks([]);
     setTrash([]); setNotices([]); setInstallJobs([]); setTargets([]); setClaims([]);
     setSupplierPayments([]); setInvoices([]); setTransfers([]); setStockIns([]);
   };
@@ -942,7 +952,7 @@ export default function App() {
   // Deleting anywhere in the app routes here instead of removing outright:
   // the item moves to Trash (kept 90 days), tagged with who deleted it.
   const trashItem = (kind, item) => setTrash([{ trashId: Date.now() + Math.random(), kind, item, by: user.name, deletedAt: new Date().toISOString() }, ...trash]);
-  const collections = { order: [logs, setLogs], damage: [damages, setDamages], document: [docs, setDocs], dealer: [dealers, setDealers], product: [products, setProducts], task: [tasks, setTasks], user: [users, setUsers] };
+  const collections = { order: [logs, setLogs], damage: [damages, setDamages], document: [docs, setDocs], dealer: [dealers, setDealers], installer: [installers, setInstallers], product: [products, setProducts], task: [tasks, setTasks], user: [users, setUsers] };
   const restoreTrash = trashId => {
     const t = trash.find(x => x.trashId === trashId);
     if (!t) return;
@@ -1067,11 +1077,12 @@ export default function App() {
           </div>
 
           {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("inventory")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
-          {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} />}
+          {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} onEditInstall={l => { setEditOrderLog(l); setModal("order-install"); }} />}
           {page === "damage" && <DamagePage damages={damages} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} onSendReplacement={sendReplacement} onActivateServicing={activateServicing} onReject={rejectDamage} onMarkServicingDone={markServicingDone} />}
           {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} onDelete={deleteDoc} />}
           {page === "reports" && <ReportsPage logs={logs} />}
           {page === "dealers" && <DealersPage dealers={dealers} setDealers={setDealers} users={users} onAdd={() => { setEditDealer(null); setModal("dealer"); }} onEdit={d => { setEditDealer(d); setModal("dealer"); }} onTrash={trashItem} />}
+          {page === "installers" && <InstallersPage installers={installers} onAdd={() => { setEditInstaller(null); setModal("installer"); }} onEdit={i => { setEditInstaller(i); setModal("installer"); }} onTrash={trashItem} setInstallers={setInstallers} />}
           {page === "inventory" && <InventoryPage products={products} setItems={setProducts} transfers={transfers} onTransfer={transferStock} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} onBulkAdd={() => setModal("bulk-products")} stockIns={stockIns} onReceive={receiveStock} />}
           {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} onTrash={trashItem} />}
           {page === "trash" && <TrashPage trash={trash} me={user.name} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onRestore={restoreTrash} onPermanentDelete={permanentDelete} onEmpty={emptyTrash} />}
@@ -1085,7 +1096,8 @@ export default function App() {
         </div>
       </div>
 
-      {modal === "log" && <LogModal user={user} dealers={dealers} products={products} onSave={handlePurchase} onClose={closeModal} />}
+      {modal === "log" && <LogModal user={user} isAdmin={isAdmin} dealers={dealers} products={products} installers={installers} onSave={handlePurchase} onClose={closeModal} />}
+      {modal === "order-install" && editOrderLog && <OrderInstallModal log={editOrderLog} installers={installers} onSave={payload => { updateOrderInstallation(editOrderLog.id, payload); closeModal(); }} onClose={closeModal} />}
       {modal === "order-created" && lastOrder && <OrderCreatedModal order={lastOrder} onClose={closeModal} />}
       {modal === "damage" && <DamageModal user={user} products={products} dealers={dealers} onSave={e => { setDamages([{ id: Date.now(), ...e }, ...damages]); setModal(null); }} onClose={closeModal} />}
       {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([{ id: Date.now(), ...e }, ...docs]); setModal(null); }} onClose={closeModal} />}
@@ -1094,6 +1106,7 @@ export default function App() {
       {modal === "claim" && <ClaimModal user={user} dealers={dealers} onSave={submitClaim} onClose={closeModal} />}
       {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={closeModal} />}
       {modal === "dealer" && <DealerModal edit={editDealer} dealers={dealers} setDealers={setDealers} users={users} isAdmin={isAdmin} me={user.name} onClose={closeModal} />}
+      {modal === "installer" && <InstallerModal edit={editInstaller} installers={installers} setInstallers={setInstallers} onClose={closeModal} />}
       {modal === "product" && <CatalogModal noun="Product" edit={editProduct} items={products} setItems={setProducts} onClose={closeModal} />}
       {modal === "bulk-products" && <BulkAddProductsModal products={products} setProducts={setProducts} onClose={closeModal} />}
       {modal === "task" && <TaskModal user={user} edit={editTask} tasks={tasks} setTasks={setTasks} onClose={closeModal} />}
@@ -1687,7 +1700,7 @@ function SalesCalendar({ logs, isAdmin }) {
 }
 
 // ── DAILY LOG ─────────────────────────────────────────────────────────────────
-function DailyPage({ logs, me, isAdmin, onAdd, onDelete }) {
+function DailyPage({ logs, me, isAdmin, onAdd, onDelete, onEditInstall }) {
   const [filterDate, setFilterDate] = useState(todayISO());
   const mine = isAdmin ? logs : logs.filter(l => l.by === me);
   const filtered = filterDate ? mine.filter(l => l.dateISO === filterDate) : mine;
@@ -1715,12 +1728,12 @@ function DailyPage({ logs, me, isAdmin, onAdd, onDelete }) {
       </div>
       <div className="section-hdr"><div className="section-title">Orders ({filtered.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Order</button></div>
       {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📝</div><div className="empty-lbl">No orders for this date.</div></div>
-        : filtered.map((l, i) => <LogRow key={l.id ?? i} log={l} onDelete={() => onDelete(l)} />)}
+        : filtered.map((l, i) => <LogRow key={l.id ?? i} log={l} onDelete={() => onDelete(l)} onEditInstall={(isAdmin || l.by === me) && onEditInstall ? () => onEditInstall(l) : null} />)}
     </div>
   );
 }
 
-function LogRow({ log, onDelete }) {
+function LogRow({ log, onDelete, onEditInstall }) {
   return (
     <div className="list-item">
       <div className="item-meta"><div className="item-time">{log.date} · {log.time}</div><div className="item-by">{log.by}</div></div>
@@ -1737,7 +1750,13 @@ function LogRow({ log, onDelete }) {
       </div>
       {log.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{log.notes}</div>}
       {log.photo && <img src={log.photo} alt="entry" className="photo-preview" />}
-      {(log.product || onDelete) && (
+      {log.installationNeeded && (
+        <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A" }}>🛠️ Installation Needed</div>
+          <div style={{ fontSize: 12, color: "#8A8073" }}>{log.installer || "No installer assigned yet"}</div>
+        </div>
+      )}
+      {(log.product || onDelete || onEditInstall) && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {log.product && <>
             <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "PO")}>⬇ PO</button>
@@ -1745,10 +1764,40 @@ function LogRow({ log, onDelete }) {
             <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "DO")}>⬇ DO</button>
             <button className="btn btn-ghost btn-xs" onClick={() => printDoc(log, "DO")}>🖨 DO</button>
           </>}
+          {onEditInstall && <button className="btn btn-ghost btn-xs" onClick={onEditInstall}>✎ Edit Installation</button>}
           {onDelete && <button className="btn btn-danger btn-xs" onClick={onDelete}>🗑 Delete</button>}
         </div>
       )}
     </div>
+  );
+}
+
+// Lets Admin or the salesperson who created the order set/change whether installation is
+// needed and which installer is assigned — after the order already exists, without
+// touching the delivered/returned/stock figures already recorded against it.
+function OrderInstallModal({ log, installers, onSave, onClose }) {
+  const [needed, setNeeded] = useState(!!log.installationNeeded);
+  const [installer, setInstaller] = useState(log.installer || "");
+  const save = () => onSave({ installationNeeded: needed, installer: needed ? installer : "" });
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-handle" /><div className="modal-title">Edit Installation Info</div>
+      <div className="card-sub" style={{ marginBottom: 4 }}>{log.product}{log.dealer ? ` · ${log.dealer}` : ""} · {log.date}</div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+        <input type="checkbox" checked={needed} onChange={e => setNeeded(e.target.checked)} />
+        Installation Needed
+      </label>
+      {needed && (
+        <div className="form-group"><div className="field-label">Installer</div>
+          <select className="field-select" value={installer} onChange={e => setInstaller(e.target.value)}>
+            <option value="">Select an installer…</option>
+            {installers.map(i => <option key={i.id} value={i.name}>{i.name}</option>)}
+          </select>
+          {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installers yet — add one in the Installers page first.</div>}
+        </div>
+      )}
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
   );
 }
 
@@ -2367,6 +2416,73 @@ function DealerModal({ edit, dealers, setDealers, users, isAdmin, me, onClose })
           <div style={{ fontSize: 13, fontWeight: 600, padding: "10px 0" }}>{salesperson || me} <span style={{ fontSize: 11, color: "#8A8073", fontWeight: 400 }}>(only Admin can reassign)</span></div>
         )}
       </div>
+      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+    </div></div>
+  );
+}
+
+// ── INSTALLERS (business/payment record — separate from installer login accounts) ────
+const PAYMENT_MODES = ["Bank Transfer", "PayNow", "Cheque", "Cash", "Other"];
+
+function InstallersPage({ installers, setInstallers, onAdd, onEdit, onTrash }) {
+  const remove = i => { setInstallers(installers.filter(x => x.id !== i.id)); onTrash("installer", i); };
+  return (
+    <div className="content">
+      <div className="section-hdr"><div className="section-title">Installers ({installers.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add Installer</button></div>
+      {installers.length === 0
+        ? <div className="empty"><div className="empty-icon">👷</div><div className="empty-lbl">No installers yet. Add your first one.</div></div>
+        : installers.map(i => (
+          <div className="list-item" key={i.id}>
+            <div className="item-meta">
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div className="cat-ic">👷</div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{i.name}</div>
+                  {i.contactPhone || i.contactEmail ? <div style={{ fontSize: 11, color: "#8A8073" }}>{i.contactPhone}{i.contactPhone && i.contactEmail ? " · " : ""}{i.contactEmail}</div> : null}
+                </div>
+              </div>
+              {i.paymentMode && <span className="entry-tag">💳 {i.paymentMode}</span>}
+            </div>
+            {i.paymentInfo && <div style={{ fontSize: 12, color: "#8A8073" }}>{i.paymentInfo}</div>}
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className="btn btn-ghost btn-xs" onClick={() => onEdit(i)}>Edit</button>
+              <button className="btn btn-danger btn-xs" onClick={() => remove(i)}>Remove</button>
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function InstallerModal({ edit, installers, setInstallers, onClose }) {
+  const [name, setName] = useState(edit?.name || "");
+  const [contactPhone, setContactPhone] = useState(edit?.contactPhone || "");
+  const [contactEmail, setContactEmail] = useState(edit?.contactEmail || "");
+  const [paymentMode, setPaymentMode] = useState(edit?.paymentMode || "");
+  const [paymentInfo, setPaymentInfo] = useState(edit?.paymentInfo || "");
+  const save = () => {
+    const v = name.trim();
+    if (!v) return;
+    const extra = { name: v, contactPhone, contactEmail, paymentMode, paymentInfo };
+    if (edit) setInstallers(installers.map(x => x.id === edit.id ? { ...x, ...extra } : x));
+    else if (!installers.some(x => x.name.toLowerCase() === v.toLowerCase())) setInstallers([...installers, { id: Date.now(), createdAt: new Date().toISOString(), ...extra }]);
+    onClose();
+  };
+  return (
+    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-handle" /><div className="modal-title">{edit ? "Edit Installer" : "Add Installer"}</div>
+      <div className="form-group"><div className="field-label">Company / Person Name</div><input className="field-input" autoFocus placeholder="Installer name" value={name} onChange={e => setName(e.target.value)} /></div>
+      <div className="input-row-2">
+        <div className="form-group"><div className="field-label">Contact Number</div><input className="field-input" placeholder="9123 4567" value={contactPhone} onChange={e => setContactPhone(e.target.value)} /></div>
+        <div className="form-group"><div className="field-label">Contact Email</div><input className="field-input" type="email" placeholder="contact@installer.com" value={contactEmail} onChange={e => setContactEmail(e.target.value)} /></div>
+      </div>
+      <div className="form-group"><div className="field-label">Payment Mode</div>
+        <select className="field-select" value={paymentMode} onChange={e => setPaymentMode(e.target.value)}>
+          <option value="">Select payment mode…</option>
+          {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </div>
+      <div className="form-group"><div className="field-label">Payment Information</div><input className="field-input" placeholder="e.g. Bank/account no., PayNow number, etc." value={paymentInfo} onChange={e => setPaymentInfo(e.target.value)} /></div>
       <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
     </div></div>
   );
@@ -3432,13 +3548,16 @@ function SettingsPage({ settings, setSettings, counters, setCounters, invoices, 
 }
 
 // ── MODALS ────────────────────────────────────────────────────────────────────
-function LogModal({ user, dealers, products, onSave, onClose }) {
+function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClose }) {
   const [dealer,setDealer]=useState("");
   const [product,setProduct]=useState("");
   const [delivered,setDelivered]=useState("");
   const [returned,setReturned]=useState("");
   const [exchanged,setExchanged]=useState("");
   const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
+  const [dateISO,setDateISO]=useState(todayISO());
+  const [installationNeeded,setInstallationNeeded]=useState(false);
+  const [installer,setInstaller]=useState("");
   const [err,setErr]=useState("");
   const hp=e=>handlePhoto(e,setPhoto);
   const prod = products.find(p=>p.name===product);
@@ -3447,18 +3566,23 @@ function LogModal({ user, dealers, products, onSave, onClose }) {
   const save=()=>{
     if(!dealer||!product){ setErr("Please select a dealer and a product."); return; }
     if(!delivered&&!returned&&!exchanged){ setErr("Enter a delivered, returned or exchanged quantity."); return; }
+    if(!dateISO){ setErr("Please select a date."); return; }
     const dealerRec = dealers.find(d=>d.name===dealer);
     onSave({
       id: Date.now(),
       dealer, product, price,
       dealerPhone: dealerRec?.contactPhone || "", dealerEmail: dealerRec?.contactEmail || "",
       sold: Number(delivered)||0, returned: Number(returned)||0, exchanged: Number(exchanged)||0,
-      notes, photo, by:user.name, date:todayStr(), dateISO:todayISO(), time:fmtTime(),
+      notes, photo, by:user.name, date:fmtDate(new Date(dateISO+"T00:00:00")), dateISO, time:fmtTime(),
+      installationNeeded, installer: installationNeeded ? installer : "",
     });
   };
   return (
     <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}>
       <div className="modal-handle"/><div className="modal-title">New Order</div>
+      {isAdmin && (
+        <div className="form-group"><div className="field-label">Order Date</div><input className="field-input" type="date" value={dateISO} onChange={e=>setDateISO(e.target.value)}/></div>
+      )}
       <div className="form-group"><div className="field-label">Dealer</div>
         <select className="field-select" value={dealer} onChange={e=>setDealer(e.target.value)}>
           <option value="">Select an approved dealer…</option>
@@ -3480,6 +3604,19 @@ function LogModal({ user, dealers, products, onSave, onClose }) {
         <span>Returned = damage · Exchanged = wrong size</span>
         {amount>0 && <span style={{fontWeight:700, color:"#221E1A"}}>Amount ${amount.toLocaleString("en-SG",{minimumFractionDigits:2})}</span>}
       </div>
+      <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+        <input type="checkbox" checked={installationNeeded} onChange={e=>setInstallationNeeded(e.target.checked)}/>
+        Installation Needed
+      </label>
+      {installationNeeded && (
+        <div className="form-group"><div className="field-label">Installer</div>
+          <select className="field-select" value={installer} onChange={e=>setInstaller(e.target.value)}>
+            <option value="">Select an installer…</option>
+            {installers.map(i=><option key={i.id} value={i.name}>{i.name}</option>)}
+          </select>
+          {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installers yet — add one in the Installers page first.</div>}
+        </div>
+      )}
       <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="Any remarks..." value={notes} onChange={e=>setNotes(e.target.value)}/></div>
       <div className="form-group"><div className="field-label">Photo (optional)</div>
         <div className="photo-zone"><input type="file" accept="image/*" capture="environment" onChange={hp}/>{photo?<img src={photo} alt="p" className="photo-preview"/>:<><div className="photo-icon">📷</div><div className="photo-lbl">Tap to upload photo</div></>}</div>
