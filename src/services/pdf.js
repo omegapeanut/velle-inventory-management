@@ -18,15 +18,20 @@ const money = n => "$" + (Number(n) || 0).toLocaleString("en-SG", { minimumFract
 
 // Build the printable line items from an order (delivered / returned / exchanged).
 function lineItems(order) {
+  // Orders can carry multiple products (order.items); older/legacy orders only ever had
+  // one product on the top-level fields — fall back to that as a single-line array.
+  const rows = order.items && order.items.length ? order.items : [{ product: order.product, price: order.price, sold: order.sold, returned: order.returned, exchanged: order.exchanged }];
   const items = [];
-  const price = Number(order.price) || 0;
-  const delivered = Number(order.sold) || 0;   // "sold" key stores Delivered qty
-  const returned = Number(order.returned) || 0;
-  const exchanged = Number(order.exchanged) || 0;
-  const name = order.product || "Item";
-  if (delivered > 0) items.push({ desc: name, note: "", qty: delivered, price, amount: delivered * price });
-  if (returned > 0) items.push({ desc: name, note: "Returned — Damaged / Defective", qty: returned, price: -price, amount: -returned * price });
-  if (exchanged > 0) items.push({ desc: name, note: "Exchanged — Wrong Size (like-for-like)", qty: exchanged, price: 0, amount: 0 });
+  rows.forEach(row => {
+    const price = Number(row.price) || 0;
+    const delivered = Number(row.sold) || 0;   // "sold" key stores Delivered qty
+    const returned = Number(row.returned) || 0;
+    const exchanged = Number(row.exchanged) || 0;
+    const name = row.product || "Item";
+    if (delivered > 0) items.push({ desc: name, note: "", qty: delivered, price, amount: delivered * price });
+    if (returned > 0) items.push({ desc: name, note: "Returned — Damaged / Defective", qty: returned, price: -price, amount: -returned * price });
+    if (exchanged > 0) items.push({ desc: name, note: "Exchanged — Wrong Size (like-for-like)", qty: exchanged, price: 0, amount: 0 });
+  });
   return items;
 }
 

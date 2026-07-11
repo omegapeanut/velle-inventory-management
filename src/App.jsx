@@ -562,17 +562,42 @@ const GST_RATE = 0.09;
 const daysOverdue = dueISO => Math.floor((Date.now() - new Date(dueISO + "T00:00:00").getTime()) / 86400000);
 const agingBucket = days => days <= 0 ? "Not due" : days <= 30 ? "1–30 days" : days <= 60 ? "31–60 days" : days <= 90 ? "61–90 days" : "90+ days";
 
+// Multi-product orders store their line items in `items[]`; single-product legacy
+// logs mirror their one item as top-level scalar fields. This synthesizes `items[]`
+// for the legacy shape so every aggregate can iterate one consistent list.
+function logItems(l) {
+  return l.items && l.items.length ? l.items : [{ product: l.product, price: l.price, sold: l.sold, returned: l.returned, exchanged: l.exchanged }];
+}
+// Sums delivered/returned/exchanged/revenue across ALL line items of a log entry
+// (not just items[0]) so multi-product orders aren't undercounted in KPIs.
+function logTotals(l) {
+  return logItems(l).reduce((acc, it) => {
+    const sold = Number(it.sold) || 0;
+    const returned = Number(it.returned) || 0;
+    const exchanged = Number(it.exchanged) || 0;
+    const price = Number(it.price) || 0;
+    acc.sold += sold;
+    acc.returned += returned;
+    acc.exchanged += exchanged;
+    acc.value += (sold - returned) * price;
+    return acc;
+  }, { sold: 0, returned: 0, exchanged: 0, value: 0 });
+}
+
 // Pure calc: every dealer with net-positive quantity in a given month, with billable
 // lines and totals. Shared by the billing preview, manual generation, and auto-generation.
 function computeMonthlyBilling(logs, monthISO) {
   const byDealer = {};
   logs.forEach(l => {
     if (!l.dealer || !l.dateISO || l.dateISO.slice(0, 7) !== monthISO) return;
-    const qty = (Number(l.sold) || 0) - (Number(l.returned) || 0);
-    if (qty <= 0) return;
-    const price = Number(l.price) || 0;
-    if (!byDealer[l.dealer]) byDealer[l.dealer] = [];
-    byDealer[l.dealer].push({ poNo: l.poNo, doNo: l.doNo, model: l.product, qty, price, amount: qty * price });
+    const orderItems = logItems(l);
+    orderItems.forEach(it => {
+      const qty = (Number(it.sold) || 0) - (Number(it.returned) || 0);
+      if (qty <= 0) return;
+      const price = Number(it.price) || 0;
+      if (!byDealer[l.dealer]) byDealer[l.dealer] = [];
+      byDealer[l.dealer].push({ poNo: l.poNo, doNo: l.doNo, model: it.product, qty, price, amount: qty * price });
+    });
   });
   return Object.entries(byDealer).map(([dealer, lines]) => {
     const subtotal = lines.reduce((s, l) => s + l.amount, 0);
@@ -844,16 +869,21 @@ export default function App() {
     return { poNo, doNo };
   };
 
-  // Saving a New Order: record it and adjust Dispatch warehouse stock (both dealer
-  // sales and installer draws fulfil from Dispatch; Main is bulk/reserve storage).
+  // Saving a New Order: record it and adjust Dispatch warehouse stock for every line
+  // item (both dealer sales and installer draws fulfil from Dispatch; Main is
+  // bulk/reserve storage).
   const handlePurchase = e => {
     const withDocs = { ...e, ...allocateDocNumbers() };
     setLogs([withDocs, ...logs]);
-    const delivered = Number(e.sold) || 0;
-    const returned = Number(e.returned) || 0;
-    if (e.product && (delivered || returned)) {
-      setProducts(ps => ps.map(p => p.name.toLowerCase() === e.product.toLowerCase() ? { ...p, stockDispatch: (Number(p.stockDispatch) || 0) - delivered + returned } : p));
-    }
+    const items = e.items && e.items.length ? e.items : [{ product: e.product, sold: e.sold, returned: e.returned }];
+    setProducts(ps => ps.map(p => {
+      const line = items.find(it => it.product && it.product.toLowerCase() === p.name.toLowerCase());
+      if (!line) return p;
+      const delivered = Number(line.sold) || 0;
+      const returned = Number(line.returned) || 0;
+      if (!delivered && !returned) return p;
+      return { ...p, stockDispatch: (Number(p.stockDispatch) || 0) - delivered + returned };
+    }));
     setLastOrder(withDocs);
     setModal("order-created");
   };
@@ -1240,14 +1270,14 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
   // Sales summary for the chosen period (daily / weekly / monthly; yearly is admin-only).
   const pStartISO = periodStartISO(period);
   const periodLogs = scoped.filter(l => l.dateISO >= pStartISO);
-  const pDelivered = periodLogs.reduce((s, l) => s + Number(l.sold), 0);
-  const pReturned = periodLogs.reduce((s, l) => s + Number(l.returned || 0), 0);
-  const pRevenue = periodLogs.reduce((s, l) => s + (Number(l.sold) - Number(l.returned || 0)) * Number(l.price || 0), 0);
+  const pDelivered = periodLogs.reduce((s, l) => s + logTotals(l).sold, 0);
+  const pReturned = periodLogs.reduce((s, l) => s + logTotals(l).returned, 0);
+  const pRevenue = periodLogs.reduce((s, l) => s + logTotals(l).value, 0);
   const periodTabs = [["day", "Today"], ["week", "This Week"], ["month", "This Month"], ...(isAdmin ? [["year", "This Year"]] : [])];
   const todayLogs = scoped.filter(l => l.date === todayStr());
-  const sold = todayLogs.reduce((s, l) => s + Number(l.sold), 0);
-  const returned = todayLogs.reduce((s, l) => s + Number(l.returned), 0);
-  const exchanged = todayLogs.reduce((s, l) => s + Number(l.exchanged || 0), 0);
+  const sold = todayLogs.reduce((s, l) => s + logTotals(l).sold, 0);
+  const returned = todayLogs.reduce((s, l) => s + logTotals(l).returned, 0);
+  const exchanged = todayLogs.reduce((s, l) => s + logTotals(l).exchanged, 0);
   const lowStock = (products || []).filter(p => totalStock(p) <= Number(p.threshold));
   const totalMainStock = (products || []).reduce((s, p) => s + (Number(p.stockMain) || 0), 0);
   const totalDispatchStock = (products || []).reduce((s, p) => s + (Number(p.stockDispatch) || 0), 0);
@@ -1259,7 +1289,7 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
   const monthStartISO = periodStartISO("month");
   const newDealersThisWeek = (dealers || []).filter(d => d.salesperson === me && d.createdAt && d.createdAt.split("T")[0] >= weekStartISO).length;
   const monthLogs = scoped.filter(l => l.dateISO >= monthStartISO);
-  const salesThisMonth = monthLogs.reduce((s, l) => s + (Number(l.sold) - Number(l.returned || 0)) * Number(l.price || 0), 0);
+  const salesThisMonth = monthLogs.reduce((s, l) => s + logTotals(l).value, 0);
 
   // Last 7 days bar chart data
   const last7 = (() => {
@@ -1271,8 +1301,8 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
       const dayLogs = scoped.filter(l => l.dateISO === iso);
       arr.push({
         day: label,
-        Delivered: dayLogs.reduce((s, l) => s + Number(l.sold), 0),
-        Returned: dayLogs.reduce((s, l) => s + Number(l.returned), 0),
+        Delivered: dayLogs.reduce((s, l) => s + logTotals(l).sold, 0),
+        Returned: dayLogs.reduce((s, l) => s + logTotals(l).returned, 0),
       });
     }
     return arr;
@@ -1286,7 +1316,7 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
       const iso = d.toISOString().split("T")[0];
       const label = d.toLocaleDateString("en-SG", { day: "2-digit", month: "short" });
       const dayLogs = scoped.filter(l => l.dateISO === iso);
-      arr.push({ day: label, Delivered: dayLogs.reduce((s, l) => s + Number(l.sold), 0) });
+      arr.push({ day: label, Delivered: dayLogs.reduce((s, l) => s + logTotals(l).sold, 0) });
     }
     return arr;
   })();
@@ -1305,7 +1335,7 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
   const spMap = {};
   logs.forEach(l => {
     if (!spMap[l.by]) spMap[l.by] = { name: l.by, Delivered: 0 };
-    spMap[l.by].Delivered += Number(l.sold);
+    spMap[l.by].Delivered += logTotals(l).sold;
   });
   const spData = Object.values(spMap);
 
@@ -1616,8 +1646,8 @@ function MyDealersCard({ dealers, logs, me }) {
         <div className="empty" style={{ padding: "20px 0" }}><div className="empty-lbl">No dealers assigned to you yet — ask Admin to assign one.</div></div>
       ) : mine.map(d => {
         const dealerLogs = logs.filter(l => l.dealer === d.name);
-        const delivered = dealerLogs.reduce((s, l) => s + Number(l.sold), 0);
-        const value = dealerLogs.reduce((s, l) => s + (Number(l.sold) - Number(l.returned || 0)) * Number(l.price || 0), 0);
+        const delivered = dealerLogs.reduce((s, l) => s + logTotals(l).sold, 0);
+        const value = dealerLogs.reduce((s, l) => s + logTotals(l).value, 0);
         return (
           <div key={d.id} className="dealer-card">
             <div className="dealer-hdr">
@@ -1656,8 +1686,8 @@ function SalesCalendar({ logs, isAdmin }) {
     const [y, m, d] = l.dateISO.split("-").map(Number);
     if (y === year && m === month + 1) {
       if (!byDay[d]) byDay[d] = { d: 0, r: 0, n: 0 };
-      byDay[d].d += Number(l.sold) || 0;
-      byDay[d].r += Number(l.returned) || 0;
+      byDay[d].d += logTotals(l).sold;
+      byDay[d].r += logTotals(l).returned;
       byDay[d].n += 1;
     }
   });
@@ -1741,12 +1771,12 @@ function SalesCalendar({ logs, isAdmin }) {
             : selectedOrders.map((l, i) => (
               <div className="cal-detail-row" key={l.id ?? i}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{l.product || "—"}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{l.items && l.items.length > 1 ? `${l.product} +${l.items.length - 1} more` : (l.product || "—")}</div>
                   <div style={{ fontSize: 11, color: "#8A8073" }}>{l.dealer || "—"}{l.by ? ` · ${l.by}` : ""}{l.time ? ` · ${l.time}` : ""}</div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  {Number(l.sold) > 0 && <span className="entry-tag">🚚 {l.sold}</span>}
-                  {Number(l.returned) > 0 && <span className="entry-tag product">↩ {l.returned}</span>}
+                  {logTotals(l).sold > 0 && <span className="entry-tag">🚚 {logTotals(l).sold}</span>}
+                  {logTotals(l).returned > 0 && <span className="entry-tag product">↩ {logTotals(l).returned}</span>}
                 </div>
               </div>
             ))}
@@ -1761,9 +1791,9 @@ function DailyPage({ logs, me, isAdmin, onAdd, onDelete, onEditInstall }) {
   const [filterDate, setFilterDate] = useState(todayISO());
   const mine = isAdmin ? logs : logs.filter(l => l.by === me);
   const filtered = filterDate ? mine.filter(l => l.dateISO === filterDate) : mine;
-  const delivered = filtered.reduce((s, l) => s + Number(l.sold), 0);
-  const returned = filtered.reduce((s, l) => s + Number(l.returned), 0);
-  const exchanged = filtered.reduce((s, l) => s + Number(l.exchanged || 0), 0);
+  const delivered = filtered.reduce((s, l) => s + logTotals(l).sold, 0);
+  const returned = filtered.reduce((s, l) => s + logTotals(l).returned, 0);
+  const exchanged = filtered.reduce((s, l) => s + logTotals(l).exchanged, 0);
   return (
     <div className="content">
       <div className="card">
@@ -1791,20 +1821,35 @@ function DailyPage({ logs, me, isAdmin, onAdd, onDelete, onEditInstall }) {
 }
 
 function LogRow({ log, onDelete, onEditInstall }) {
+  const items = log.items && log.items.length ? log.items : null;
+  const multi = items && items.length > 1;
   return (
     <div className="list-item">
       <div className="item-meta"><div className="item-time">{log.date} · {log.time}</div><div className="item-by">{log.by}</div></div>
-      {(log.dealer || log.product) && (
+      {log.dealer && (
         <div className="entry-tags">
-          {log.dealer && <span className="entry-tag">🤝 {log.dealer}</span>}
-          {log.product && <span className="entry-tag product">🛁 {log.product}</span>}
+          <span className="entry-tag">🤝 {log.dealer}</span>
+          {!multi && log.product && <span className="entry-tag product">🛁 {log.product}</span>}
         </div>
       )}
-      <div className="nums-row">
-        <div className="num-block"><div className="num-val" style={{ color: "#9A7B4E" }}>{log.sold}</div><div className="num-lbl">delivered</div></div>
-        <div className="num-block"><div className="num-val" style={{ color: "#B5715A" }}>{log.returned}</div><div className="num-lbl">returned</div></div>
-        {log.exchanged > 0 && <div className="num-block"><div className="num-val" style={{ color: "#F59E0B" }}>{log.exchanged}</div><div className="num-lbl">exchanged</div></div>}
-      </div>
+      {multi ? (
+        items.map((it, i) => (
+          <div key={i} style={{ background: "var(--bg)", borderRadius: 8, padding: "6px 10px" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>🛁 {it.product}</div>
+            <div className="nums-row">
+              <div className="num-block"><div className="num-val" style={{ color: "#9A7B4E" }}>{it.sold}</div><div className="num-lbl">delivered</div></div>
+              <div className="num-block"><div className="num-val" style={{ color: "#B5715A" }}>{it.returned}</div><div className="num-lbl">returned</div></div>
+              {it.exchanged > 0 && <div className="num-block"><div className="num-val" style={{ color: "#F59E0B" }}>{it.exchanged}</div><div className="num-lbl">exchanged</div></div>}
+            </div>
+          </div>
+        ))
+      ) : (
+        <div className="nums-row">
+          <div className="num-block"><div className="num-val" style={{ color: "#9A7B4E" }}>{log.sold}</div><div className="num-lbl">delivered</div></div>
+          <div className="num-block"><div className="num-val" style={{ color: "#B5715A" }}>{log.returned}</div><div className="num-lbl">returned</div></div>
+          {log.exchanged > 0 && <div className="num-block"><div className="num-val" style={{ color: "#F59E0B" }}>{log.exchanged}</div><div className="num-lbl">exchanged</div></div>}
+        </div>
+      )}
       {log.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{log.notes}</div>}
       {log.photo && <img src={log.photo} alt="entry" className="photo-preview" />}
       {log.installationNeeded && (
@@ -2036,8 +2081,8 @@ function ReportsPage({ logs }) {
   const byDate = {};
   filtered.forEach(l => {
     if (!byDate[l.dateISO]) byDate[l.dateISO] = { sold: 0, returned: 0, date: l.date };
-    byDate[l.dateISO].sold += Number(l.sold);
-    byDate[l.dateISO].returned += Number(l.returned);
+    byDate[l.dateISO].sold += logTotals(l).sold;
+    byDate[l.dateISO].returned += logTotals(l).returned;
   });
   const chartData = Object.entries(byDate).sort((a,b) => a[0].localeCompare(b[0])).map(([,v]) => ({ day: v.date, Delivered: v.sold, Returned: v.returned }));
   return (
@@ -2056,7 +2101,7 @@ function ReportsPage({ logs }) {
         <button className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }} onClick={() => { setFrom(""); setTo(""); setBySP(""); }}>Clear</button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-        {[["Delivered", filtered.reduce((s,l)=>s+Number(l.sold),0), "#9A7B4E"],["Returned", filtered.reduce((s,l)=>s+Number(l.returned),0),"#B5715A"],["Entries", filtered.length,"#F59E0B"]].map(([lbl,val,clr]) => (
+        {[["Delivered", filtered.reduce((s,l)=>s+logTotals(l).sold,0), "#9A7B4E"],["Returned", filtered.reduce((s,l)=>s+logTotals(l).returned,0),"#B5715A"],["Entries", filtered.length,"#F59E0B"]].map(([lbl,val,clr]) => (
           <div key={lbl} className="kpi-card"><div className="kpi-val" style={{ color: clr, fontSize: 24 }}>{val}</div><div className="kpi-lbl">{lbl}</div></div>
         ))}
       </div>
@@ -3665,29 +3710,32 @@ function SettingsPage({ settings, setSettings, counters, setCounters, invoices, 
 // ── MODALS ────────────────────────────────────────────────────────────────────
 function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClose }) {
   const [dealer,setDealer]=useState("");
-  const [product,setProduct]=useState("");
-  const [delivered,setDelivered]=useState("");
-  const [returned,setReturned]=useState("");
-  const [exchanged,setExchanged]=useState("");
+  const [rows,setRows]=useState([{ product: "", delivered: "", returned: "", exchanged: "" }]);
   const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
   const [dateISO,setDateISO]=useState(todayISO());
   const [installationNeeded,setInstallationNeeded]=useState(false);
   const [installer,setInstaller]=useState("");
   const [err,setErr]=useState("");
   const hp=e=>handlePhoto(e,setPhoto);
-  const prod = products.find(p=>p.name===product);
-  const price = prod ? Number(prod.price)||0 : 0;
-  const amount = price * (Number(delivered)||0);
+  const priceFor = name => Number(products.find(p=>p.name===name)?.price)||0;
+  const setRow = (i, field, val) => setRows(rows.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+  const addRow = () => setRows([...rows, { product: "", delivered: "", returned: "", exchanged: "" }]);
+  const removeRow = i => setRows(rows.filter((_, idx) => idx !== i));
+  const amount = rows.reduce((s, r) => s + priceFor(r.product) * (Number(r.delivered)||0), 0);
   const save=()=>{
-    if(!dealer||!product){ setErr("Please select a dealer and a product."); return; }
-    if(!delivered&&!returned&&!exchanged){ setErr("Enter a delivered, returned or exchanged quantity."); return; }
+    if(!dealer){ setErr("Please select a dealer."); return; }
+    const items = rows.filter(r => r.product && (Number(r.delivered) || Number(r.returned) || Number(r.exchanged)))
+      .map(r => ({ product: r.product, price: priceFor(r.product), sold: Number(r.delivered)||0, returned: Number(r.returned)||0, exchanged: Number(r.exchanged)||0 }));
+    if(items.length === 0){ setErr("Add at least one product with a delivered, returned or exchanged quantity."); return; }
     if(!dateISO){ setErr("Please select a date."); return; }
     const dealerRec = dealers.find(d=>d.name===dealer);
     onSave({
       id: Date.now(),
-      dealer, product, price,
+      dealer, items,
+      // Kept for any code still reading a single product/qty (e.g. legacy displays) —
+      // reflects the first line item; downstream PDF/billing logic reads `items` directly.
+      product: items[0].product, price: items[0].price, sold: items[0].sold, returned: items[0].returned, exchanged: items[0].exchanged,
       dealerPhone: dealerRec?.contactPhone || "", dealerEmail: dealerRec?.contactEmail || "",
-      sold: Number(delivered)||0, returned: Number(returned)||0, exchanged: Number(exchanged)||0,
       notes, photo, by:user.name, date:fmtDate(new Date(dateISO+"T00:00:00")), dateISO, time:fmtTime(),
       installationNeeded, installer: installationNeeded ? installer : "",
     });
@@ -3704,17 +3752,24 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
           {dealers.map(d=><option key={d.id} value={d.name}>{d.name}</option>)}
         </select>
       </div>
-      <div className="form-group"><div className="field-label">Product</div>
-        <select className="field-select" value={product} onChange={e=>setProduct(e.target.value)}>
-          <option value="">Select a product…</option>
-          {products.map(p=><option key={p.id} value={p.name}>{p.name}{p.price?` — $${p.price}`:""}</option>)}
-        </select>
-      </div>
-      <div className="input-row-3">
-        <div className="form-group"><div className="field-label">Delivered</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={delivered} onChange={e=>setDelivered(e.target.value)}/></div>
-        <div className="form-group"><div className="field-label">Returned</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={returned} onChange={e=>setReturned(e.target.value)}/></div>
-        <div className="form-group"><div className="field-label">Exchanged</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={exchanged} onChange={e=>setExchanged(e.target.value)}/></div>
-      </div>
+      {rows.map((r, i) => (
+        <div key={i} style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 10px 4px", marginBottom: 2 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div className="field-label">Product {rows.length > 1 ? i + 1 : ""}</div>
+            {rows.length > 1 && <button className="btn btn-danger btn-xs" onClick={() => removeRow(i)}>✕ Remove</button>}
+          </div>
+          <select className="field-select" value={r.product} onChange={e=>setRow(i, "product", e.target.value)}>
+            <option value="">Select a product…</option>
+            {products.map(p=><option key={p.id} value={p.name}>{p.name}{p.price?` — $${p.price}`:""}</option>)}
+          </select>
+          <div className="input-row-3">
+            <div className="form-group"><div className="field-label">Delivered</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={r.delivered} onChange={e=>setRow(i, "delivered", e.target.value)}/></div>
+            <div className="form-group"><div className="field-label">Returned</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={r.returned} onChange={e=>setRow(i, "returned", e.target.value)}/></div>
+            <div className="form-group"><div className="field-label">Exchanged</div><input className="field-input" type="number" inputMode="numeric" placeholder="0" value={r.exchanged} onChange={e=>setRow(i, "exchanged", e.target.value)}/></div>
+          </div>
+        </div>
+      ))}
+      <button className="btn btn-ghost btn-xs" style={{ alignSelf: "flex-start" }} onClick={addRow}>+ Add Product</button>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:11.5, color:"#8A8073" }}>
         <span>Returned = damage · Exchanged = wrong size</span>
         {amount>0 && <span style={{fontWeight:700, color:"#221E1A"}}>Amount ${amount.toLocaleString("en-SG",{minimumFractionDigits:2})}</span>}
@@ -3759,7 +3814,11 @@ function OrderCreatedModal({ order, onClose }) {
       <div style={{ textAlign: "center" }}>
         <div style={{ fontSize: 40 }}>✅</div>
         <div className="modal-title" style={{ textAlign: "center" }}>Order Created</div>
-        <div style={{ fontSize: 13, color: "#8A8073", marginTop: 4 }}>{order.sold} × {order.product} · {order.dealer}</div>
+        <div style={{ fontSize: 13, color: "#8A8073", marginTop: 4 }}>
+          {order.items && order.items.length > 1
+            ? `${order.items.length} products · ${logTotals(order).sold} total`
+            : `${order.sold} × ${order.product}`} · {order.dealer}
+        </div>
       </div>
       <div className="input-row-2">
         {card("Purchase Order", order.poNo, "PO")}
