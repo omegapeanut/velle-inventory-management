@@ -120,19 +120,10 @@ function totals(doc, y, order) {
   return totalsBlock(doc, y, sub, gst, VELLE.gstRate, sub + gst, "Total (SGD)");
 }
 
-// Who generated this document — a real name for manual actions, or a plain
-// "Computer Generated" credit for anything the system created on its own.
-function issuedByLabel(by) {
-  if (!by || by === "System") return "Computer Generated";
-  return `Issued by ${by}`;
-}
-
-// Thank-you note (left) + issued-by credit (right), on one row below the totals.
-function closingRow(doc, y, by) {
+// Thank-you note below the totals. (Document no longer credits who issued it.)
+function closingRow(doc, y) {
   doc.setFont("helvetica", "italic"); doc.setFontSize(9.5); doc.setTextColor(...ACCENT);
   doc.text("Thank you for your business!", L, y);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MUTE);
-  doc.text(issuedByLabel(by), R, y, { align: "right" });
   return y + 14;
 }
 
@@ -196,7 +187,7 @@ export function makePO(order) {
   y = parties(doc, y, order);
   y = itemsTable(doc, y + 4, order, true);
   y = totals(doc, y + 24, order);
-  y = closingRow(doc, y + 14, order.by);
+  y = closingRow(doc, y + 14);
   y = paymentQR(doc, y + 16);
   y = officialUseBox(doc, y + 18);
   y = terms(doc, y + 20);
@@ -212,7 +203,7 @@ export function makeDO(order) {
   y = itemsTable(doc, y + 4, order, false);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...MUTE);
   doc.text("Please check goods on receipt. Sign below to acknowledge delivery in good order.", L, y + 20);
-  y = closingRow(doc, y + 40, order.by);
+  y = closingRow(doc, y + 40);
   y = officialUseBox(doc, y + 12);
   y = terms(doc, y + 20);
   signatures(doc, Math.max(y + 24, 760));
@@ -274,7 +265,7 @@ export function makeTaxInvoice(invoice) {
   y = invoiceParties(doc, y, invoice);
   y = invoiceItemsTable(doc, y + 4, invoice);
   y = invoiceTotals(doc, y + 24, invoice);
-  y = closingRow(doc, y + 14, invoice.by);
+  y = closingRow(doc, y + 14);
   y = paymentQR(doc, y + 16);
   y = officialUseBox(doc, y + 18);
   invoiceTerms(doc, y + 20);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, LabelList } from "recharts";
 import { db, authReady } from "./services/firebase";
 import { doc, onSnapshot, setDoc } from "firebase/firestore";
 import { isCloudinaryConfigured, uploadImage } from "./services/cloudinary";
@@ -129,6 +129,9 @@ const STYLES = `
     .btn-sm { padding: 9px 15px; font-size: 13px; }
     .user-row { flex-wrap: wrap; gap: 10px; }
     .topbar-date { display: none; }
+    /* Anchoring the dropdown to the bell icon's right:0 can run it off-screen on
+       narrow phones — pin it as a full-width panel under the topbar instead. */
+    .bell-dropdown { position: fixed; left: 12px; right: 12px; top: 62px; width: auto; max-width: none; }
   }
 
   /* SIDENAV */
@@ -578,8 +581,8 @@ function computeMonthlyBilling(logs, monthISO) {
   });
 }
 function buildInvoice(billing, monthISO, by, dealers = []) {
-  const due = new Date(); due.setDate(due.getDate() + 30);
   const dealerRec = dealers.find(d => d.name === billing.dealer);
+  const due = new Date(); due.setDate(due.getDate() + (Number(dealerRec?.creditTerms) || 30));
   return {
     id: Date.now() + Math.random(), refNo: `INV-${monthISO.replace("-", "")}-${String(Date.now()).slice(-4)}`,
     dealer: billing.dealer, dealerPhone: dealerRec?.contactPhone || "", dealerEmail: dealerRec?.contactEmail || "",
@@ -587,6 +590,7 @@ function buildInvoice(billing, monthISO, by, dealers = []) {
     lines: billing.lines, subtotal: billing.subtotal, gst: billing.gst, gstRate: GST_RATE, total: billing.total,
     issueDate: todayStr(), issueDateISO: todayISO(), dueDate: fmtDate(due), dueDateISO: due.toISOString().split("T")[0],
     status: "unpaid", paidDateISO: null, sent: false, sentDateISO: null, by,
+    dueSoonNotified: false, overdueNotified: false,
   };
 }
 
@@ -640,7 +644,7 @@ const NAV = [
   { id: "damage", label: "Damage Returns", icon: "⚠️", admin: false, roles: [...SALES_ROLES, "installer"] },
   { id: "documents", label: "Documents", icon: "📄", admin: false, roles: SALES_ROLES },
   { id: "tasks", label: "Tasks & Servicing", icon: "🧰", admin: false, roles: SALES_ROLES },
-  { id: "claims", label: "Claims", icon: "🧾", admin: false, roles: SALES_ROLES },
+  { id: "claims", label: "Claims", icon: "🧾", admin: false, roles: [...SALES_ROLES, "installer"] },
   { id: "install-jobs-mine", label: "My Jobs", icon: "🛠️", admin: false, roles: ["installer"] },
   { id: "trash", label: "Trash", icon: "🗑️", admin: false },
   { id: "reports", label: "Reports", icon: "📈", admin: true },
@@ -792,6 +796,44 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, logs, invoices]);
+
+  // AR watch: notify Admin once when an unpaid invoice comes within 3 days of its due
+  // date, and once more if it actually goes overdue — each invoice only ever triggers
+  // each notice once (tracked via dueSoonNotified/overdueNotified flags on the invoice).
+  useEffect(() => {
+    if (!user || (user.role !== "admin" && user.role !== "superadmin")) return;
+    const updates = [];
+    const newNotices = [];
+    invoices.forEach(i => {
+      if (i.status === "paid") return;
+      const overdue = daysOverdue(i.dueDateISO);
+      if (overdue > 0 && !i.overdueNotified) {
+        updates.push({ id: i.id, patch: { overdueNotified: true } });
+        newNotices.push({
+          id: Date.now() + Math.random(),
+          title: `Invoice overdue — ${i.dealer}`,
+          message: `${i.refNo} for ${i.dealer} (${sgd(i.total)}) was due ${i.dueDate} and is now ${overdue} day${overdue > 1 ? "s" : ""} overdue.`,
+          by: "System", date: todayStr(), dateISO: todayISO(), ackBy: [],
+        });
+      } else if (overdue > -3 && overdue <= 0 && !i.dueSoonNotified) {
+        updates.push({ id: i.id, patch: { dueSoonNotified: true } });
+        newNotices.push({
+          id: Date.now() + Math.random(),
+          title: `Invoice due soon — ${i.dealer}`,
+          message: `${i.refNo} for ${i.dealer} (${sgd(i.total)}) is due ${i.dueDate}.`,
+          by: "System", date: todayStr(), dateISO: todayISO(), ackBy: [],
+        });
+      }
+    });
+    if (updates.length > 0) {
+      setInvoices(invoices.map(i => {
+        const u = updates.find(x => x.id === i.id);
+        return u ? { ...i, ...u.patch } : i;
+      }));
+      setNotices([...newNotices, ...notices]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, invoices]);
 
   // Shared running PO/DO series (set in SuperAdmin → Company Settings). Used by both
   // Sales Orders and Installer Jobs so every document draws from one running number.
@@ -988,7 +1030,11 @@ export default function App() {
 
   // ── NOTICE BOARD ──
   const postNotice = (title, message) => setNotices([{ id: Date.now(), title, message, by: user.name, date: todayStr(), dateISO: todayISO(), ackBy: [] }, ...notices]);
-  const acknowledgeNotice = id => setNotices(notices.map(n => {
+  // Functional update form matters here: the bell can call this several times in the
+  // same tick (acknowledging every unread notice at once when it's opened), and each
+  // call needs to build on the previous one rather than all starting from the same
+  // stale `notices` snapshot (which would silently drop all but the last).
+  const acknowledgeNotice = id => setNotices(prev => prev.map(n => {
     if (n.id !== id || (n.ackBy || []).some(a => a.name === user.name)) return n;
     return { ...n, ackBy: [...(n.ackBy || []), { name: user.name, at: new Date().toISOString() }] };
   }));
@@ -1005,10 +1051,11 @@ export default function App() {
   // ── CLAIMS ──
   const submitClaim = payload => {
     setClaims([{ id: Date.now(), ...payload, status: "pending" }, ...claims]);
+    const exact = `$${(Number(payload.amount) || 0).toFixed(2)}`;
     setNotices([{
       id: Date.now() + 1,
-      title: `New claim submitted — ${sgd(Number(payload.amount) || 0)}`,
-      message: `${user.name} submitted a claim of ${sgd(Number(payload.amount) || 0)}${payload.dealer ? ` for ${payload.dealer}` : ""}${payload.notes ? `: "${payload.notes}"` : ""}.`,
+      title: `New claim submitted — ${exact}`,
+      message: `${user.name} submitted a claim of ${exact}${payload.dealer ? ` for ${payload.dealer}` : ""}${payload.notes ? `: "${payload.notes}"` : ""}.`,
       by: user.name, date: todayStr(), dateISO: todayISO(), ackBy: [],
     }, ...notices]);
     setModal(null);
@@ -1030,7 +1077,14 @@ export default function App() {
     setInvoices([invoice, ...invoices]);
     return invoice;
   };
-  const markInvoicePaid = id => setInvoices(invoices.map(i => i.id === id ? { ...i, status: "paid", paidDateISO: todayISO() } : i));
+  // Records the actual payment received against an invoice — amount, date and an
+  // optional reference — instead of just flagging it paid with no supporting detail.
+  const markInvoicePaid = (id, payload) => setInvoices(invoices.map(i => i.id === id ? {
+    ...i, status: "paid",
+    paidDateISO: payload?.paidDateISO || todayISO(),
+    paidAmount: payload?.paidAmount ?? i.total,
+    paidReference: payload?.paidReference || "",
+  } : i));
   const markInvoiceSent = id => setInvoices(invoices.map(i => i.id === id ? { ...i, sent: true, sentDateISO: todayISO() } : i));
 
   return (
@@ -1456,6 +1510,12 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
 function NotificationBell({ notices, me, onAck, open, setOpen }) {
   const isUnread = n => n.by !== me && !(n.ackBy || []).some(a => a.name === me);
   const unread = notices.filter(isUnread);
+  // Opening the bell counts as "read" — auto-acknowledge everything currently unread so
+  // the badge clears immediately, rather than requiring a tap on every single item.
+  useEffect(() => {
+    if (open) unread.forEach(n => onAck(n.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   return (
     <>
       {open && <div className="bell-backdrop" onClick={() => setOpen(false)} />}
@@ -1468,16 +1528,13 @@ function NotificationBell({ notices, me, onAck, open, setOpen }) {
           <div className="bell-dropdown">
             <div className="bell-dropdown-hdr">Notifications</div>
             {notices.length === 0 ? <div className="bell-empty">No notifications yet.</div>
-              : notices.slice(0, 20).map(n => {
-                const unreadItem = isUnread(n);
-                return (
-                  <div key={n.id} className={`bell-item ${unreadItem ? "unread" : ""}`} onClick={() => { if (unreadItem) onAck(n.id); }}>
-                    <div className="bell-item-title">{n.title}</div>
-                    <div className="bell-item-msg">{n.message}</div>
-                    <div className="bell-item-meta">{n.date} · by {n.by}{unreadItem ? " · tap to acknowledge" : ""}</div>
-                  </div>
-                );
-              })}
+              : notices.slice(0, 20).map(n => (
+                <div key={n.id} className="bell-item">
+                  <div className="bell-item-title">{n.title}</div>
+                  <div className="bell-item-msg">{n.message}</div>
+                  <div className="bell-item-meta">{n.date} · by {n.by}</div>
+                </div>
+              ))}
           </div>
         )}
       </div>
@@ -1506,7 +1563,7 @@ function NoticeBoard({ notices, users, me, isAdmin, onAck, onPost }) {
                 <div className="notice-title">{n.title}</div>
                 <div className="notice-meta">{n.date} · by {n.by}</div>
               </div>
-              {!isAdmin && (
+              {n.by !== me && (
                 <button className={`btn btn-xs ${iAcked ? "btn-green" : "btn-primary"}`} disabled={iAcked} onClick={() => onAck(n.id)}>
                   {iAcked ? "✓ Acknowledged" : "Acknowledge"}
                 </button>
@@ -2181,14 +2238,18 @@ function WarehousesView({ products, transfers, onTransfer }) {
         <div className="card-title">Stock by Product — Main vs Dispatch</div>
         {chartData.length === 0 ? <div className="empty" style={{ padding: "20px 0" }}><div className="empty-lbl">No products yet.</div></div> : (
           <ResponsiveContainer width="100%" height={Math.max(140, chartData.length * 34)}>
-            <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 20, left: 20, bottom: 0 }}>
+            <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 40, left: 20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" horizontal={false} />
               <XAxis type="number" tick={{ fontSize: 11, fill: "#8A8073" }} />
               <YAxis type="category" dataKey="name" tick={{ fontSize: 10.5, fill: "#221E1A", fontWeight: 600 }} width={150} />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Main" fill="#221E1A" radius={[0, 4, 4, 0]} />
-              <Bar dataKey="Dispatch" fill="#9A7B4E" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="Main" fill="#221E1A" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                <LabelList dataKey="Main" position="right" style={{ fontSize: 10.5, fill: "#221E1A", fontWeight: 700 }} />
+              </Bar>
+              <Bar dataKey="Dispatch" fill="#9A7B4E" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                <LabelList dataKey="Dispatch" position="right" style={{ fontSize: 10.5, fill: "#9A7B4E", fontWeight: 700 }} />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -2370,6 +2431,7 @@ function DealersPage({ dealers, setDealers, onAdd, onEdit, onTrash }) {
               <span className="entry-tag">👤 {d.salesperson || "Unassigned"}</span>
             </div>
             {d.address && <div style={{ fontSize: 12, color: "#8A8073" }}>📍 {d.address}</div>}
+            <div style={{ fontSize: 12, color: "#8A8073" }}>💳 Credit terms: {d.creditTerms || 30} days</div>
             <div style={{ display: "flex", gap: 6 }}>
               <button className="btn btn-ghost btn-xs" onClick={() => onEdit(d)}>Edit</button>
               <button className="btn btn-danger btn-xs" onClick={() => remove(d)}>Remove</button>
@@ -2387,11 +2449,12 @@ function DealerModal({ edit, dealers, setDealers, users, isAdmin, me, onClose })
   const [contactEmail, setContactEmail] = useState(edit?.contactEmail || "");
   const [address, setAddress] = useState(edit?.address || "");
   const [salesperson, setSalesperson] = useState(edit?.salesperson || (isAdmin ? "" : me));
+  const [creditTerms, setCreditTerms] = useState(edit?.creditTerms ? String(edit.creditTerms) : "30");
   const salespeople = users.filter(u => u.role === "salesperson");
   const save = () => {
     const v = name.trim();
     if (!v) return;
-    const extra = { name: v, contactName, contactPhone, contactEmail, address, salesperson };
+    const extra = { name: v, contactName, contactPhone, contactEmail, address, salesperson, creditTerms: Number(creditTerms) || 30 };
     if (edit) setDealers(dealers.map(x => x.id === edit.id ? { ...x, ...extra } : x));
     else if (!dealers.some(x => x.name.toLowerCase() === v.toLowerCase())) setDealers([...dealers, { id: Date.now(), createdAt: new Date().toISOString(), ...extra }]);
     onClose();
@@ -2406,6 +2469,9 @@ function DealerModal({ edit, dealers, setDealers, users, isAdmin, me, onClose })
       </div>
       <div className="form-group"><div className="field-label">Contact Email</div><input className="field-input" type="email" placeholder="contact@dealer.com" value={contactEmail} onChange={e => setContactEmail(e.target.value)} /></div>
       <div className="form-group"><div className="field-label">Showroom Address</div><input className="field-input" placeholder="Full address for the map" value={address} onChange={e => setAddress(e.target.value)} /></div>
+      <div className="form-group"><div className="field-label">Credit Terms (days)</div><input className="field-input" type="number" inputMode="numeric" placeholder="30" value={creditTerms} onChange={e => setCreditTerms(e.target.value)} />
+        <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>How many days after invoice date this dealer's payment is due. Applies to tax invoices generated from now on.</div>
+      </div>
       <div className="form-group"><div className="field-label">Assigned Salesperson</div>
         {isAdmin ? (
           <select className="field-select" value={salesperson} onChange={e => setSalesperson(e.target.value)}>
@@ -3213,12 +3279,17 @@ function FinancePage({ logs, claims, invoices, supplierPayments, onGenerateInvoi
   const paidInvoices = invoices.filter(i => i.status === "paid");
   const unpaidInvoices = invoices.filter(i => i.status !== "paid");
   const totalIncome = paidInvoices.reduce((s, i) => s + i.total, 0);
-  const curMonth = todayISO().slice(0, 7);
-  const nmd = new Date(); nmd.setMonth(nmd.getMonth() + 1);
-  const nextMonth = nmd.toISOString().slice(0, 7);
-  const collectableThisMonth = unpaidInvoices.filter(i => i.dueDateISO.slice(0, 7) === curMonth).reduce((s, i) => s + i.total, 0);
-  const collectableNextMonth = unpaidInvoices.filter(i => i.dueDateISO.slice(0, 7) === nextMonth).reduce((s, i) => s + i.total, 0);
   const outstanding = unpaidInvoices.reduce((s, i) => s + i.total, 0);
+
+  // Cashflow projection: what's expected to come in over the next few months, based on
+  // each unpaid invoice's due date (using its dealer's own credit terms).
+  const projectionMonths = [];
+  for (let i = 0; i < 4; i++) { const d = new Date(); d.setMonth(d.getMonth() + i); projectionMonths.push(d.toISOString().slice(0, 7)); }
+  const projectionData = projectionMonths.map((m, i) => ({
+    month: i === 0 ? "This Month" : new Date(m + "-01").toLocaleDateString("en-SG", { month: "long", year: "numeric" }),
+    Expected: unpaidInvoices.filter(inv => inv.dueDateISO.slice(0, 7) === m).reduce((s, inv) => s + inv.total, 0),
+  }));
+  const collectableThisMonth = projectionData[0].Expected;
 
   const aging = unpaidInvoices.map(i => ({ ...i, overdue: daysOverdue(i.dueDateISO) }));
   const agingBuckets = ["Not due", "1–30 days", "31–60 days", "61–90 days", "90+ days"];
@@ -3266,8 +3337,21 @@ function FinancePage({ logs, claims, invoices, supplierPayments, onGenerateInvoi
             <div className="kpi-card"><div className="kpi-val" style={{ color: "#10B981", fontSize: 19 }}>{sgd(totalIncome)}</div><div className="kpi-lbl">Income Received</div></div>
             <div className="kpi-card"><div className="kpi-val" style={{ color: "#B5715A", fontSize: 19 }}>{sgd(totalSupplierPayments)}</div><div className="kpi-lbl">Paid to Suppliers</div></div>
             <div className="kpi-card"><div className="kpi-val" style={{ color: "#9A7B4E", fontSize: 19 }}>{sgd(collectableThisMonth)}</div><div className="kpi-lbl">Collectable This Month</div></div>
-            <div className="kpi-card"><div className="kpi-val" style={{ color: "#F59E0B", fontSize: 19 }}>{sgd(collectableNextMonth)}</div><div className="kpi-lbl">Collectable Next Month</div></div>
             <div className="kpi-card"><div className="kpi-val" style={{ color: "#EF4444", fontSize: 19 }}>{sgd(outstanding)}</div><div className="kpi-lbl">Total Outstanding</div></div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">Expected Collections — Coming Months</div>
+            <div className="card-sub">Unpaid invoices grouped by due date (each dealer's own credit terms)</div>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={projectionData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E8E1D6" />
+                <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#8A8073" }} />
+                <YAxis tick={{ fontSize: 11, fill: "#8A8073" }} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="Expected" fill="#9A7B4E" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
 
           <div className="card-flow">
@@ -3382,25 +3466,7 @@ function FinancePage({ logs, claims, invoices, supplierPayments, onGenerateInvoi
         <>
           <div className="section-hdr"><div className="section-title">All Tax Invoices ({invoices.length})</div></div>
           {invoices.length === 0 ? <div className="empty"><div className="empty-icon">🧾</div><div className="empty-lbl">No invoices generated yet.</div></div>
-            : invoices.map(i => (
-              <div className="list-item" key={i.id}>
-                <div className="item-meta">
-                  <div style={{ fontWeight: 700 }}>{i.dealer}</div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <span className={`badge ${i.status === "paid" ? "badge-reviewed" : "badge-pending"}`}>{i.status}</span>
-                    <span className={`badge ${i.sent ? "badge-reviewed" : "badge-rejected"}`}>{i.sent ? "sent" : "not sent"}</span>
-                  </div>
-                </div>
-                <div className="item-time">{i.refNo} · {i.monthLabel} · Due {i.dueDate}</div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "#9A7B4E" }}>{sgd(i.total)}</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <button className="btn btn-ghost btn-xs" onClick={() => downloadInvoice(i)}>⬇ PDF</button>
-                  <button className="btn btn-ghost btn-xs" onClick={() => printInvoice(i)}>🖨 Print</button>
-                  {!i.sent && <button className="btn btn-primary btn-xs" onClick={() => onMarkSent(i.id)}>Mark as Sent</button>}
-                  {i.status !== "paid" && <button className="btn btn-green btn-xs" onClick={() => onMarkPaid(i.id)}>Mark Paid</button>}
-                </div>
-              </div>
-            ))}
+            : invoices.map(i => <InvoiceRow key={i.id} i={i} onMarkPaid={onMarkPaid} onMarkSent={onMarkSent} />)}
         </>
       )}
 
@@ -3424,6 +3490,55 @@ function FinancePage({ logs, claims, invoices, supplierPayments, onGenerateInvoi
                 {p.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{p.notes}</div>}
               </div>
             ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Records an actual incoming payment against a tax invoice — amount, date and an
+// optional reference — rather than just flipping a paid/unpaid flag. Supports partial
+// payments (amount defaults to the invoice total but is editable).
+function InvoiceRow({ i, onMarkPaid, onMarkSent }) {
+  const [paying, setPaying] = useState(false);
+  const [amount, setAmount] = useState(String(i.total.toFixed(2)));
+  const [dateISO, setDateISO] = useState(todayISO());
+  const [reference, setReference] = useState("");
+  const confirm = () => {
+    onMarkPaid(i.id, { paidAmount: Number(amount) || 0, paidDateISO: dateISO, paidReference: reference });
+    setPaying(false);
+  };
+  return (
+    <div className="list-item">
+      <div className="item-meta">
+        <div style={{ fontWeight: 700 }}>{i.dealer}</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <span className={`badge ${i.status === "paid" ? "badge-reviewed" : "badge-pending"}`}>{i.status}</span>
+          <span className={`badge ${i.sent ? "badge-reviewed" : "badge-rejected"}`}>{i.sent ? "sent" : "not sent"}</span>
+        </div>
+      </div>
+      <div className="item-time">{i.refNo} · {i.monthLabel} · Due {i.dueDate}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: "#9A7B4E" }}>{sgd(i.total)}</div>
+      {i.status === "paid" && i.paidAmount != null && (
+        <div style={{ fontSize: 12, color: "#8A8073" }}>Received ${Number(i.paidAmount).toFixed(2)} on {i.paidDateISO}{i.paidReference ? ` · ${i.paidReference}` : ""}</div>
+      )}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <button className="btn btn-ghost btn-xs" onClick={() => downloadInvoice(i)}>⬇ PDF</button>
+        <button className="btn btn-ghost btn-xs" onClick={() => printInvoice(i)}>🖨 Print</button>
+        {!i.sent && <button className="btn btn-primary btn-xs" onClick={() => onMarkSent(i.id)}>Mark as Sent</button>}
+        {i.status !== "paid" && !paying && <button className="btn btn-green btn-xs" onClick={() => setPaying(true)}>Record Payment</button>}
+      </div>
+      {paying && (
+        <>
+          <div className="input-row-3">
+            <div className="form-group"><div className="field-label">Amount Received</div><input className="field-input" type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></div>
+            <div className="form-group"><div className="field-label">Date Received</div><input className="field-input" type="date" value={dateISO} onChange={e => setDateISO(e.target.value)} /></div>
+            <div className="form-group"><div className="field-label">Reference (optional)</div><input className="field-input" placeholder="e.g. Bank ref / cheque no." value={reference} onChange={e => setReference(e.target.value)} /></div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={confirm}>Confirm Payment</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setPaying(false)}>Cancel</button>
+          </div>
         </>
       )}
     </div>
