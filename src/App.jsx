@@ -155,6 +155,23 @@ const STYLES = `
   .topbar-title { font-family: var(--serif); font-size: 21px; font-weight: 700; letter-spacing: 0.01em; }
   .topbar-date { font-size: 12px; color: var(--muted); margin-left: auto; }
 
+  /* BELL NOTIFICATIONS */
+  .bell-wrap { position: relative; }
+  .topbar-date + .bell-wrap { margin-left: 12px; }
+  .bell-backdrop { position: fixed; inset: 0; z-index: 45; background: transparent; }
+  .bell-btn { position: relative; background: none; border: none; font-size: 19px; cursor: pointer; color: var(--muted); padding: 6px; line-height: 1; border-radius: 8px; }
+  .bell-btn:hover { background: var(--bg); color: var(--text); }
+  .bell-badge { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 8px; background: var(--red); color: white; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .bell-dropdown { position: absolute; top: calc(100% + 8px); right: 0; width: 340px; max-width: calc(100vw - 32px); max-height: 420px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.16); z-index: 50; padding: 8px; }
+  .bell-dropdown-hdr { font-size: 13px; font-weight: 700; padding: 6px 8px 10px; }
+  .bell-item { padding: 10px 8px; border-radius: 8px; border-bottom: 1px solid var(--border); }
+  .bell-item:last-child { border-bottom: none; }
+  .bell-item.unread { background: var(--primary-light); }
+  .bell-item-title { font-size: 12.5px; font-weight: 700; color: var(--text); }
+  .bell-item-msg { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .bell-item-meta { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+  .bell-empty { padding: 24px 8px; text-align: center; font-size: 12px; color: var(--muted); }
+
   /* CARDS */
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); }
   .card-title { font-family: var(--serif); font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 14px; }
@@ -690,6 +707,7 @@ export default function App() {
   // Installers land on their job list, not the sales dashboard.
   const [page, setPage] = useState(() => (user?.role === "installer" ? "install-jobs-mine" : "dashboard"));
   const [navOpen, setNavOpen] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
   const [users, setUsers] = usePersistentState("users", initUsers);
   const [logs, setLogs] = usePersistentState("logs", seedLogs);
   const [damages, setDamages] = usePersistentState("damages", seedDamages);
@@ -965,6 +983,34 @@ export default function App() {
     return { ...n, ackBy: [...(n.ackBy || []), { name: user.name, at: new Date().toISOString() }] };
   }));
 
+  // Closing a modal on mobile can otherwise leave the page rendered blank until the user
+  // scrolls — a WebKit/Chrome repaint bug triggered when a focused input's on-screen
+  // keyboard dismisses at the same instant the fixed-position modal overlay unmounts.
+  // Blurring first and closing on the next frame gives the browser a moment to settle.
+  const closeModal = () => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    setTimeout(() => setModal(null), 0);
+  };
+
+  // ── CLAIMS ──
+  const submitClaim = payload => {
+    setClaims([{ id: Date.now(), ...payload, status: "pending" }, ...claims]);
+    setNotices([{
+      id: Date.now() + 1,
+      title: `New claim submitted — ${sgd(Number(payload.amount) || 0)}`,
+      message: `${user.name} submitted a claim of ${sgd(Number(payload.amount) || 0)}${payload.dealer ? ` for ${payload.dealer}` : ""}${payload.notes ? `: "${payload.notes}"` : ""}.`,
+      by: user.name, date: todayStr(), dateISO: todayISO(), ackBy: [],
+    }, ...notices]);
+    setModal(null);
+  };
+  const updateClaimStatus = (id, status) => setClaims(claims.map(c => c.id === id ? { ...c, status } : c));
+  // Mark Paid: requires proof-of-transfer photo; archives the claim with both the
+  // original claim date and the date it was actually paid out.
+  const markClaimPaid = (id, proofPhoto) => setClaims(claims.map(c => c.id === id ? {
+    ...c, status: "paid", paymentProof: proofPhoto,
+    paidDate: todayStr(), paidDateISO: todayISO(), paidBy: user.name,
+  } : c));
+
   // ── FINANCE ──
   const addSupplierPayment = payload => setSupplierPayments([{ id: Date.now(), by: user.name, ...payload }, ...supplierPayments]);
   // Builds a tax invoice for one dealer's net orders in a given month, saves it, and returns it for immediate PDF download.
@@ -1017,6 +1063,7 @@ export default function App() {
             <button className="hamburger" onClick={() => setNavOpen(o => !o)}>☰</button>
             <div className="topbar-title">{NAV.find(n => n.id === page)?.label || "Dashboard"}</div>
             <div className="topbar-date">{todayStr()}</div>
+            <NotificationBell notices={notices} me={user.name} onAck={acknowledgeNotice} open={bellOpen} setOpen={setBellOpen} />
           </div>
 
           {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("inventory")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
@@ -1031,25 +1078,25 @@ export default function App() {
           {page === "install-jobs" && <InstallJobsPage jobs={installJobs} onAdd={() => { setEditInstallJob(null); setModal("install-job"); }} onEdit={j => { setEditInstallJob(j); setModal("install-job"); }} />}
           {page === "install-jobs-mine" && <InstallerJobsPage jobs={installJobs} products={products} me={user.name} onAccept={acceptInstallJob} onDraw={drawJobItems} onArrivalPhoto={captureArrivalJobPhoto} onComplete={completeInstallJob} />}
           {page === "targets" && <TargetsPage targets={targets} setTargets={setTargets} users={users} />}
-          {page === "claims" && <ClaimsPage claims={claims} setClaims={setClaims} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("claim")} />}
+          {page === "claims" && <ClaimsPage claims={claims} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("claim")} onApprove={id => updateClaimStatus(id, "approved")} onReject={id => updateClaimStatus(id, "rejected")} onMarkPaid={markClaimPaid} />}
           {page === "finance" && <FinancePage logs={logs} claims={claims} invoices={invoices} supplierPayments={supplierPayments} onGenerateInvoice={generateInvoice} onMarkPaid={markInvoicePaid} onMarkSent={markInvoiceSent} onAddSupplierPayment={addSupplierPayment} />}
           {page === "settings" && isSuperAdmin && <SettingsPage settings={companySettings} setSettings={setCompanySettings} counters={docCounters} setCounters={setDocCounters} invoices={invoices} supplierPayments={supplierPayments} claims={claims} logs={logs} damages={damages} docs={docs} dealers={dealers} products={products} tasks={tasks} trash={trash} notices={notices} onLoad={loadTestData} onClear={clearAllData} />}
           {page === "users" && <UserMgmtPage users={users} setUsers={setUsers} currentUser={user} onAdd={() => { setEditUser(null); setModal("user"); }} onEdit={u => { setEditUser(u); setModal("user"); }} onTrash={trashItem} />}
         </div>
       </div>
 
-      {modal === "log" && <LogModal user={user} dealers={dealers} products={products} onSave={handlePurchase} onClose={() => setModal(null)} />}
-      {modal === "order-created" && lastOrder && <OrderCreatedModal order={lastOrder} onClose={() => setModal(null)} />}
-      {modal === "damage" && <DamageModal user={user} products={products} dealers={dealers} onSave={e => { setDamages([{ id: Date.now(), ...e }, ...damages]); setModal(null); }} onClose={() => setModal(null)} />}
-      {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([{ id: Date.now(), ...e }, ...docs]); setModal(null); }} onClose={() => setModal(null)} />}
-      {modal === "notice" && <NoticeModal onSave={(title, message) => { postNotice(title, message); setModal(null); }} onClose={() => setModal(null)} />}
-      {modal === "install-job" && <InstallJobModal edit={editInstallJob} users={users} products={products} dealers={dealers} onSave={payload => editInstallJob ? updateInstallJob(editInstallJob.id, payload) : createInstallJob(payload)} onClose={() => setModal(null)} />}
-      {modal === "claim" && <ClaimModal user={user} dealers={dealers} onSave={e => { setClaims([{ id: Date.now(), ...e, status: "pending" }, ...claims]); setModal(null); }} onClose={() => setModal(null)} />}
-      {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={() => setModal(null)} />}
-      {modal === "dealer" && <DealerModal edit={editDealer} dealers={dealers} setDealers={setDealers} users={users} isAdmin={isAdmin} me={user.name} onClose={() => setModal(null)} />}
-      {modal === "product" && <CatalogModal noun="Product" edit={editProduct} items={products} setItems={setProducts} onClose={() => setModal(null)} />}
-      {modal === "bulk-products" && <BulkAddProductsModal products={products} setProducts={setProducts} onClose={() => setModal(null)} />}
-      {modal === "task" && <TaskModal user={user} edit={editTask} tasks={tasks} setTasks={setTasks} onClose={() => setModal(null)} />}
+      {modal === "log" && <LogModal user={user} dealers={dealers} products={products} onSave={handlePurchase} onClose={closeModal} />}
+      {modal === "order-created" && lastOrder && <OrderCreatedModal order={lastOrder} onClose={closeModal} />}
+      {modal === "damage" && <DamageModal user={user} products={products} dealers={dealers} onSave={e => { setDamages([{ id: Date.now(), ...e }, ...damages]); setModal(null); }} onClose={closeModal} />}
+      {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([{ id: Date.now(), ...e }, ...docs]); setModal(null); }} onClose={closeModal} />}
+      {modal === "notice" && <NoticeModal onSave={(title, message) => { postNotice(title, message); setModal(null); }} onClose={closeModal} />}
+      {modal === "install-job" && <InstallJobModal edit={editInstallJob} users={users} products={products} dealers={dealers} onSave={payload => editInstallJob ? updateInstallJob(editInstallJob.id, payload) : createInstallJob(payload)} onClose={closeModal} />}
+      {modal === "claim" && <ClaimModal user={user} dealers={dealers} onSave={submitClaim} onClose={closeModal} />}
+      {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={closeModal} />}
+      {modal === "dealer" && <DealerModal edit={editDealer} dealers={dealers} setDealers={setDealers} users={users} isAdmin={isAdmin} me={user.name} onClose={closeModal} />}
+      {modal === "product" && <CatalogModal noun="Product" edit={editProduct} items={products} setItems={setProducts} onClose={closeModal} />}
+      {modal === "bulk-products" && <BulkAddProductsModal products={products} setProducts={setProducts} onClose={closeModal} />}
+      {modal === "task" && <TaskModal user={user} edit={editTask} tasks={tasks} setTasks={setTasks} onClose={closeModal} />}
     </>
   );
 }
@@ -1387,6 +1434,41 @@ function DashboardPage({ logs, damages, docs, products, users, notices, dealers,
 
       <button className="btn btn-primary" onClick={onAdd} style={{ width: "100%", padding: 14, fontSize: 15 }}>+ New Order</button>
     </div>
+  );
+}
+
+// ── NOTIFICATION BELL (topbar, all roles) ─────────────────────────────────────
+// Installers never see the Dashboard/Notice Board, so this is their only way to
+// know when anything concerning them happens (a claim, a completed job, etc.).
+function NotificationBell({ notices, me, onAck, open, setOpen }) {
+  const isUnread = n => n.by !== me && !(n.ackBy || []).some(a => a.name === me);
+  const unread = notices.filter(isUnread);
+  return (
+    <>
+      {open && <div className="bell-backdrop" onClick={() => setOpen(false)} />}
+      <div className="bell-wrap">
+        <button className="bell-btn" onClick={() => setOpen(o => !o)}>
+          🔔
+          {unread.length > 0 && <span className="bell-badge">{unread.length > 9 ? "9+" : unread.length}</span>}
+        </button>
+        {open && (
+          <div className="bell-dropdown">
+            <div className="bell-dropdown-hdr">Notifications</div>
+            {notices.length === 0 ? <div className="bell-empty">No notifications yet.</div>
+              : notices.slice(0, 20).map(n => {
+                const unreadItem = isUnread(n);
+                return (
+                  <div key={n.id} className={`bell-item ${unreadItem ? "unread" : ""}`} onClick={() => { if (unreadItem) onAck(n.id); }}>
+                    <div className="bell-item-title">{n.title}</div>
+                    <div className="bell-item-msg">{n.message}</div>
+                    <div className="bell-item-meta">{n.date} · by {n.by}{unreadItem ? " · tap to acknowledge" : ""}</div>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -2829,15 +2911,19 @@ function TargetsPage({ targets, setTargets, users }) {
 }
 
 // ── CLAIMS ─────────────────────────────────────────────────────────────────────
-function ClaimsPage({ claims, setClaims, me, isAdmin, onAdd }) {
+const CLAIM_STATUS_BADGE = { pending: "pending", approved: "reviewed", rejected: "rejected", paid: "reviewed" };
+
+function ClaimsPage({ claims, me, isAdmin, onAdd, onApprove, onReject, onMarkPaid }) {
   const [tab, setTab] = useState("mine");
   const mine = claims.filter(c => c.by === me);
+  const paid = claims.filter(c => c.status === "paid");
   return (
     <div className="content">
       {isAdmin && (
         <div className="page-tabs">
           <button className={`btn btn-sm ${tab === "mine" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("mine")}>My Claims</button>
           <button className={`btn btn-sm ${tab === "review" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("review")}>Review ({claims.filter(c => c.status === "pending").length})</button>
+          <button className={`btn btn-sm ${tab === "paid" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("paid")}>Paid Archive ({paid.length})</button>
         </div>
       )}
       {tab === "mine" && (<>
@@ -2845,14 +2931,16 @@ function ClaimsPage({ claims, setClaims, me, isAdmin, onAdd }) {
         {mine.length === 0 ? <div className="empty"><div className="empty-icon">🧾</div><div className="empty-lbl">No claims submitted yet.</div></div>
           : mine.map(c => (
             <div className="list-item" key={c.id}>
-              <div className="item-meta"><div style={{ fontSize: 15, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className={`badge badge-${c.status === "pending" ? "pending" : c.status === "approved" ? "reviewed" : "rejected"}`}>{c.status}</span></div>
-              <div className="item-time">{c.date}{c.dealer ? ` · ${c.dealer}` : ""}</div>
+              <div className="item-meta"><div style={{ fontSize: 15, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className={`badge badge-${CLAIM_STATUS_BADGE[c.status] || c.status}`}>{c.status}</span></div>
+              <div className="item-time">Claimed {c.date}{c.dealer ? ` · ${c.dealer}` : ""}</div>
+              {c.status === "paid" && <div className="item-time">Paid {c.paidDate}</div>}
               {c.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{c.notes}</div>}
               {c.photo && <img src={c.photo} alt="receipt" className="photo-preview" />}
             </div>
           ))}
       </>)}
-      {tab === "review" && isAdmin && <ClaimsReviewView claims={claims} setClaims={setClaims} />}
+      {tab === "review" && isAdmin && <ClaimsReviewView claims={claims} onApprove={onApprove} onReject={onReject} onMarkPaid={onMarkPaid} />}
+      {tab === "paid" && isAdmin && <ClaimsPaidArchiveView claims={paid} />}
     </div>
   );
 }
@@ -2889,10 +2977,10 @@ function ClaimModal({ user, dealers, onSave, onClose }) {
   );
 }
 
-function ClaimsReviewView({ claims, setClaims }) {
-  const update = (id, status) => setClaims(claims.map(c => c.id === id ? { ...c, status } : c));
+function ClaimsReviewView({ claims, onApprove, onReject, onMarkPaid }) {
   const pending = claims.filter(c => c.status === "pending");
-  const reviewed = claims.filter(c => c.status !== "pending");
+  const approved = claims.filter(c => c.status === "approved");
+  const rejected = claims.filter(c => c.status === "rejected");
   return (
     <>
       <div className="section-title">Pending ({pending.length})</div>
@@ -2904,21 +2992,83 @@ function ClaimsReviewView({ claims, setClaims }) {
           {c.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{c.notes}</div>}
           {c.photo && <img src={c.photo} alt="receipt" style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 8 }} />}
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={() => update(c.id, "approved")}>Approve</button>
-            <button className="btn btn-danger btn-sm" style={{ flex: 1 }} onClick={() => update(c.id, "rejected")}>Reject</button>
+            <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={() => onApprove(c.id)}>Approve</button>
+            <button className="btn btn-danger btn-sm" style={{ flex: 1 }} onClick={() => onReject(c.id)}>Reject</button>
           </div>
         </div>
       ))}
-      {reviewed.length > 0 && <>
+      {approved.length > 0 && <>
         <div className="divider" />
-        <div className="section-title">Reviewed</div>
-        {reviewed.map(c => (
+        <div className="section-title">Approved — Awaiting Payment ({approved.length})</div>
+        {approved.map(c => <ClaimPayRow key={c.id} c={c} onMarkPaid={onMarkPaid} />)}
+      </>}
+      {rejected.length > 0 && <>
+        <div className="divider" />
+        <div className="section-title">Rejected</div>
+        {rejected.map(c => (
           <div className="list-item" key={c.id}>
-            <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className={`badge badge-${c.status === "approved" ? "reviewed" : "rejected"}`}>{c.status}</span></div>
+            <div className="item-meta"><div style={{ fontSize: 14, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className="badge badge-rejected">rejected</span></div>
             <div className="item-time">{c.date} · by {c.by}{c.dealer ? ` · ${c.dealer}` : ""}</div>
           </div>
         ))}
       </>}
+    </>
+  );
+}
+
+function ClaimPayRow({ c, onMarkPaid }) {
+  const [paying, setPaying] = useState(false);
+  const [proof, setProof] = useState(null);
+  const [err, setErr] = useState("");
+  const hp = e => handlePhoto(e, setProof);
+  const confirm = () => {
+    if (!proof) { setErr("Please attach proof of the transfer."); return; }
+    onMarkPaid(c.id, proof);
+  };
+  return (
+    <div className="list-item">
+      <div className="item-meta"><div style={{ fontSize: 15, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className="badge badge-reviewed">approved</span></div>
+      <div className="item-time">{c.date} · by {c.by}{c.dealer ? ` · ${c.dealer}` : ""}</div>
+      {c.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{c.notes}</div>}
+      {!paying
+        ? <button className="btn btn-green btn-sm" onClick={() => setPaying(true)}>Mark Paid</button>
+        : (
+          <>
+            <div className="field-label">Proof of Transfer</div>
+            <div className="photo-zone">
+              <input type="file" accept="image/*" capture="environment" onChange={hp} />
+              {proof ? <img src={proof} alt="proof" className="photo-preview" /> : <><div className="photo-icon">🧾</div><div className="photo-lbl">Tap to photograph the transfer receipt</div></>}
+            </div>
+            {err && <div className="login-err">{err}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-green btn-sm" style={{ flex: 1 }} onClick={confirm}>Confirm Payment</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setPaying(false); setProof(null); setErr(""); }}>Cancel</button>
+            </div>
+          </>
+        )}
+    </div>
+  );
+}
+
+function ClaimsPaidArchiveView({ claims }) {
+  return (
+    <>
+      {claims.length === 0 ? <div className="empty"><div className="empty-icon">🗂️</div><div className="empty-lbl">No paid claims yet.</div></div>
+        : claims.map(c => (
+          <div className="list-item" key={c.id}>
+            <div className="item-meta"><div style={{ fontSize: 15, fontWeight: 700 }}>${parseFloat(c.amount || 0).toFixed(2)}</div><span className="badge badge-reviewed">paid</span></div>
+            <div className="item-time">by {c.by}{c.dealer ? ` · ${c.dealer}` : ""}</div>
+            <div style={{ display: "flex", gap: 16, fontSize: 12, color: "#8A8073" }}>
+              <span>Claimed: <strong style={{ color: "#221E1A" }}>{c.date}</strong></span>
+              <span>Paid: <strong style={{ color: "#221E1A" }}>{c.paidDate}</strong></span>
+            </div>
+            {c.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{c.notes}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              {c.photo && <div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#8A8073", marginBottom: 4 }}>Receipt</div><img src={c.photo} alt="receipt" className="photo-preview" /></div>}
+              {c.paymentProof && <div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#8A8073", marginBottom: 4 }}>Proof of Transfer</div><img src={c.paymentProof} alt="proof" className="photo-preview" /></div>}
+            </div>
+          </div>
+        ))}
     </>
   );
 }
