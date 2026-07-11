@@ -618,6 +618,28 @@ function buildInvoice(billing, monthISO, by, dealers = []) {
     dueSoonNotified: false, overdueNotified: false,
   };
 }
+// One-off tax invoice for a single completed installation job — billed to the job's
+// dealer if it has one, otherwise to the jobsite address (direct-to-consumer install).
+// Shares the exact same Tax Invoice PDF template as the monthly dealer billing above.
+function buildJobInvoice(job, by, dealers = []) {
+  const billTo = job.dealer || job.address || "Customer";
+  const dealerRec = dealers.find(d => d.name === job.dealer);
+  const due = new Date(); due.setDate(due.getDate() + (Number(dealerRec?.creditTerms) || 30));
+  const qty = Number(job.installedQty ?? job.qty) || 0;
+  const price = Number(job.price) || 0;
+  const subtotal = qty * price;
+  const gst = subtotal * GST_RATE;
+  return {
+    id: Date.now() + Math.random(), refNo: `INV-${(job.doNo || job.poNo || String(Date.now()).slice(-6)).replace(/\W/g, "")}`,
+    dealer: billTo, dealerPhone: dealerRec?.contactPhone || "", dealerEmail: dealerRec?.contactEmail || "",
+    monthISO: (job.dateISO || todayISO()).slice(0, 7), monthLabel: job.date || todayStr(),
+    lines: [{ poNo: job.poNo, doNo: job.doNo, model: job.installedProduct || job.product, qty, price, amount: subtotal }],
+    subtotal, gst, gstRate: GST_RATE, total: subtotal + gst,
+    issueDate: todayStr(), issueDateISO: todayISO(), dueDate: fmtDate(due), dueDateISO: due.toISOString().split("T")[0],
+    status: "unpaid", paidDateISO: null, sent: false, sentDateISO: null, by,
+    dueSoonNotified: false, overdueNotified: false, source: "job", jobId: job.id,
+  };
+}
 
 // Installation jobs — admin creates & assigns to an installer company, who accepts
 // and completes them with arrival (geo+time stamped) and completion photos.
@@ -676,7 +698,6 @@ const NAV = [
   { id: "dealers", label: "Dealers", icon: "🤝", admin: true },
   { id: "installers", label: "Installers", icon: "👷", admin: true },
   { id: "inventory", label: "Inventory", icon: "🏬", admin: true },
-  { id: "install-jobs", label: "Installation Jobs", icon: "🛠️", admin: true },
   { id: "targets", label: "Sales Targets", icon: "🎯", admin: true },
   { id: "finance", label: "Finance", icon: "💰", admin: true },
   { id: "users", label: "User Management", icon: "👥", admin: true },
@@ -806,7 +827,7 @@ export default function App() {
     const created = [];
     closedMonths.forEach(m => {
       computeMonthlyBilling(logs, m).forEach(b => {
-        if (invoices.some(i => i.dealer === b.dealer && i.monthISO === m)) return;
+        if (invoices.some(i => i.dealer === b.dealer && i.monthISO === m && i.source !== "job")) return;
         created.push(buildInvoice(b, m, "System", dealers));
       });
     });
@@ -869,12 +890,27 @@ export default function App() {
     return { poNo, doNo };
   };
 
-  // Saving a New Order: record it and adjust Dispatch warehouse stock for every line
-  // item (both dealer sales and installer draws fulfil from Dispatch; Main is
-  // bulk/reserve storage).
+  // Builds a fresh install job's baseline (empty progress fields) — shared by both the
+  // auto-create-from-order path and the retroactively-attach-to-an-existing-order path.
+  const blankInstallJob = payload => ({
+    id: Date.now() + Math.random(), status: "pending", createdBy: user.name, createdAt: new Date().toISOString(),
+    drawnItems: [], drawPhoto: null, extraPhotos: [], drawNotes: "", drawnAt: null,
+    arrivalPhoto: null, arrivalMeta: null,
+    installedProduct: null, installedQty: null, installedPhoto: null, installedAt: null,
+    returnedItems: [], returnPhoto: null, returnedAt: null,
+    ...payload,
+  });
+  // Saving a New Order: record it, adjust Dispatch warehouse stock for every line item
+  // (both dealer sales and installer draws fulfil from Dispatch; Main is bulk/reserve
+  // storage), and — if the order was placed as Delivery & Installation — create the
+  // linked installation job in the same stroke, sharing the order's PO/DO since it's
+  // the same delivery, and pushing it straight to the chosen installer's job list.
   const handlePurchase = e => {
-    const withDocs = { ...e, ...allocateDocNumbers() };
-    setLogs([withDocs, ...logs]);
+    const { installJob, ...orderFields } = e;
+    const withDocs = { ...orderFields, ...allocateDocNumbers() };
+    const job = installJob ? blankInstallJob({ ...installJob, poNo: withDocs.poNo, doNo: withDocs.doNo, dealer: withDocs.dealer, orderId: withDocs.id }) : null;
+    setLogs([job ? { ...withDocs, installJobId: job.id } : withDocs, ...logs]);
+    if (job) setInstallJobs([job, ...installJobs]);
     const items = e.items && e.items.length ? e.items : [{ product: e.product, sold: e.sold, returned: e.returned }];
     setProducts(ps => ps.map(p => {
       const line = items.find(it => it.product && it.product.toLowerCase() === p.name.toLowerCase());
@@ -887,11 +923,19 @@ export default function App() {
     setLastOrder(withDocs);
     setModal("order-created");
   };
-  // Editing installation info on an existing order — doesn't touch sold/returned/stock,
-  // just whether installation is needed and which installer is assigned. Admin and the
-  // salesperson who created the order can both make this change after the fact.
-  const updateOrderInstallation = (logId, { installationNeeded, installer }) => {
-    setLogs(logs.map(l => l.id === logId ? { ...l, installationNeeded, installer } : l));
+  // Attaching/editing the installation job linked to an existing order (from Orders'
+  // "Edit Installation" action). If the order has no linked job yet, this creates one
+  // now — sharing the order's PO/DO — and marks the order as Delivery & Installation;
+  // otherwise it just updates the existing job's details.
+  const saveOrderInstallJob = (log, payload) => {
+    if (log.installJobId) {
+      setInstallJobs(installJobs.map(j => j.id === log.installJobId ? { ...j, ...payload } : j));
+    } else {
+      const job = blankInstallJob({ ...payload, poNo: log.poNo, doNo: log.doNo, dealer: log.dealer, orderId: log.id });
+      setInstallJobs([job, ...installJobs]);
+      setLogs(logs.map(l => l.id === log.id ? { ...l, deliveryType: "installation", installer: payload.installer, installJobId: job.id } : l));
+    }
+    setModal(null);
   };
 
   // ── WAREHOUSE TRANSFER (Main → Dispatch) ──
@@ -915,18 +959,6 @@ export default function App() {
   };
 
   // ── INSTALLATION JOBS ──
-  const createInstallJob = payload => {
-    const job = {
-      id: Date.now(), ...allocateDocNumbers(), status: "pending", createdBy: user.name, createdAt: new Date().toISOString(),
-      drawnItems: [], drawPhoto: null, extraPhotos: [], drawNotes: "", drawnAt: null,
-      arrivalPhoto: null, arrivalMeta: null,
-      installedProduct: null, installedQty: null, installedPhoto: null, installedAt: null,
-      returnedItems: [], returnPhoto: null, returnedAt: null,
-      ...payload,
-    };
-    setInstallJobs([job, ...installJobs]);
-    setModal(null);
-  };
   // Admin can amend a job's instructions any time before the installer has drawn stock
   // against it — after that, product/qty/warehouse are locked in by what's already moved.
   const updateInstallJob = (jobId, payload) => {
@@ -977,9 +1009,9 @@ export default function App() {
         return back ? { ...p, [stockField]: (Number(p[stockField]) || 0) + back.qty } : p;
       }));
     }
+    const installedPrice = products.find(p => p.name === installedProduct)?.price || 0;
     setInstallJobs(installJobs.map(j => {
       if (j.id !== jobId) return j;
-      const installedPrice = products.find(p => p.name === installedProduct)?.price || 0;
       return {
         ...j, status: "completed",
         product: installedProduct, qty: installedQty, price: installedPrice,
@@ -997,6 +1029,11 @@ export default function App() {
         message: `${job.installer} completed ${installedQty} × ${installedProduct} at ${job.address}${job.dealer ? ` (${job.dealer})` : ""}. ${job.poNo} · ${job.doNo}.`,
         by: job.installer, date: todayStr(), dateISO: todayISO(), ackBy: [],
       }, ...notices]);
+      // Bill for the completed job straight away — to its dealer if it has one,
+      // otherwise to the jobsite address — rather than waiting on the monthly cycle,
+      // which only ever picks up dealer sales orders, not installer job completions.
+      const invoice = buildJobInvoice({ ...job, installedProduct, installedQty, price: installedPrice }, job.installer, dealers);
+      setInvoices([invoice, ...invoices]);
     }
   };
 
@@ -1034,7 +1071,13 @@ export default function App() {
   };
   const permanentDelete = trashId => setTrash(trash.filter(x => x.trashId !== trashId));
   const emptyTrash = () => setTrash([]);
-  const deleteLog = log => { setLogs(logs.filter(l => l !== log)); trashItem("order", log); };
+  // Deleting an order also removes its linked installation job (if any) — otherwise it'd
+  // be stranded in the installer's job list with no order left to manage it from.
+  const deleteLog = log => {
+    setLogs(logs.filter(l => l !== log));
+    if (log.installJobId) setInstallJobs(installJobs.filter(j => j.id !== log.installJobId));
+    trashItem("order", log);
+  };
   const deleteDamage = d => { setDamages(damages.filter(x => x !== d)); trashItem("damage", d); };
   const deleteDoc = d => { setDocs(docs.filter(x => x !== d)); trashItem("document", d); };
 
@@ -1161,7 +1204,7 @@ export default function App() {
           </div>
 
           {page === "dashboard" && <DashboardPage logs={logs} damages={damages} docs={docs} products={products} users={users} notices={notices} dealers={dealers} targets={targets} isAdmin={isAdmin} me={user.name} onAdd={() => setModal("log")} onGoStock={() => go("inventory")} onAck={acknowledgeNotice} onPostNotice={() => setModal("notice")} />}
-          {page === "daily" && <DailyPage logs={logs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} onEditInstall={l => { setEditOrderLog(l); setModal("order-install"); }} />}
+          {page === "daily" && <DailyPage logs={logs} installJobs={installJobs} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("log")} onDelete={deleteLog} onEditInstall={l => { setEditInstallJob(installJobs.find(j => j.id === l.installJobId) || null); setEditOrderLog(l); setModal("install-job"); }} />}
           {page === "damage" && <DamagePage damages={damages} dealers={dealers} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("damage")} onDelete={deleteDamage} onSendReplacement={sendReplacement} onActivateServicing={activateServicing} onReject={rejectDamage} onMarkServicingDone={markServicingDone} />}
           {page === "documents" && <DocumentsPage docs={docs} me={user.name} isAdmin={isAdmin} onAdd={t => { setDocType(t); setModal("doc"); }} onDelete={deleteDoc} />}
           {page === "reports" && <ReportsPage logs={logs} />}
@@ -1170,7 +1213,6 @@ export default function App() {
           {page === "inventory" && <InventoryPage products={products} setItems={setProducts} transfers={transfers} onTransfer={transferStock} onAdd={() => { setEditProduct(null); setModal("product"); }} onEdit={p => { setEditProduct(p); setModal("product"); }} onTrash={trashItem} onBulkAdd={() => setModal("bulk-products")} stockIns={stockIns} onReceive={receiveStock} />}
           {page === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} onAdd={() => { setEditTask(null); setModal("task"); }} onEdit={t => { setEditTask(t); setModal("task"); }} onTrash={trashItem} />}
           {page === "trash" && <TrashPage trash={trash} me={user.name} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onRestore={restoreTrash} onPermanentDelete={permanentDelete} onEmpty={emptyTrash} />}
-          {page === "install-jobs" && <InstallJobsPage jobs={installJobs} onAdd={() => { setEditInstallJob(null); setModal("install-job"); }} onEdit={j => { setEditInstallJob(j); setModal("install-job"); }} />}
           {page === "install-jobs-mine" && <InstallerJobsPage jobs={installJobs} products={products} me={user.name} onAccept={acceptInstallJob} onDraw={drawJobItems} onArrivalPhoto={captureArrivalJobPhoto} onComplete={completeInstallJob} />}
           {page === "targets" && <TargetsPage targets={targets} setTargets={setTargets} users={users} />}
           {page === "claims" && <ClaimsPage claims={claims} me={user.name} isAdmin={isAdmin} onAdd={() => setModal("claim")} onApprove={id => updateClaimStatus(id, "approved")} onReject={id => updateClaimStatus(id, "rejected")} onMarkPaid={markClaimPaid} />}
@@ -1180,13 +1222,17 @@ export default function App() {
         </div>
       </div>
 
-      {modal === "log" && <LogModal user={user} isAdmin={isAdmin} dealers={dealers} products={products} installers={installers} onSave={handlePurchase} onClose={closeModal} />}
-      {modal === "order-install" && editOrderLog && <OrderInstallModal log={editOrderLog} installers={installers} onSave={payload => { updateOrderInstallation(editOrderLog.id, payload); closeModal(); }} onClose={closeModal} />}
+      {modal === "log" && <LogModal user={user} isAdmin={isAdmin} dealers={dealers} products={products} installers={users.filter(u => u.role === "installer")} onSave={handlePurchase} onClose={closeModal} />}
       {modal === "order-created" && lastOrder && <OrderCreatedModal order={lastOrder} onClose={closeModal} />}
       {modal === "damage" && <DamageModal user={user} products={products} dealers={dealers} onSave={e => { setDamages([{ id: Date.now(), ...e }, ...damages]); setModal(null); }} onClose={closeModal} />}
       {modal === "doc" && <DocModal user={user} type={docType} onSave={e => { setDocs([{ id: Date.now(), ...e }, ...docs]); setModal(null); }} onClose={closeModal} />}
       {modal === "notice" && <NoticeModal onSave={(title, message) => { postNotice(title, message); setModal(null); }} onClose={closeModal} />}
-      {modal === "install-job" && <InstallJobModal edit={editInstallJob} users={users} products={products} dealers={dealers} onSave={payload => editInstallJob ? updateInstallJob(editInstallJob.id, payload) : createInstallJob(payload)} onClose={closeModal} />}
+      {modal === "install-job" && <InstallJobModal
+        edit={editInstallJob || (editOrderLog ? { product: (editOrderLog.items && editOrderLog.items[0]?.product) || editOrderLog.product, dealer: editOrderLog.dealer, dateISO: editOrderLog.dateISO } : null)}
+        users={users} products={products} dealers={dealers}
+        onSave={payload => editInstallJob ? updateInstallJob(editInstallJob.id, payload) : saveOrderInstallJob(editOrderLog, payload)}
+        onClose={closeModal}
+      />}
       {modal === "claim" && <ClaimModal user={user} dealers={dealers} onSave={submitClaim} onClose={closeModal} />}
       {modal === "user" && <UserModal editUser={editUser} users={users} setUsers={setUsers} onClose={closeModal} />}
       {modal === "dealer" && <DealerModal edit={editDealer} dealers={dealers} setDealers={setDealers} users={users} isAdmin={isAdmin} me={user.name} onClose={closeModal} />}
@@ -1787,7 +1833,7 @@ function SalesCalendar({ logs, isAdmin }) {
 }
 
 // ── DAILY LOG ─────────────────────────────────────────────────────────────────
-function DailyPage({ logs, me, isAdmin, onAdd, onDelete, onEditInstall }) {
+function DailyPage({ logs, installJobs, me, isAdmin, onAdd, onDelete, onEditInstall }) {
   const [filterDate, setFilterDate] = useState(todayISO());
   const mine = isAdmin ? logs : logs.filter(l => l.by === me);
   const filtered = filterDate ? mine.filter(l => l.dateISO === filterDate) : mine;
@@ -1815,14 +1861,15 @@ function DailyPage({ logs, me, isAdmin, onAdd, onDelete, onEditInstall }) {
       </div>
       <div className="section-hdr"><div className="section-title">Orders ({filtered.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Order</button></div>
       {filtered.length === 0 ? <div className="empty"><div className="empty-icon">📝</div><div className="empty-lbl">No orders for this date.</div></div>
-        : filtered.map((l, i) => <LogRow key={l.id ?? i} log={l} onDelete={() => onDelete(l)} onEditInstall={(isAdmin || l.by === me) && onEditInstall ? () => onEditInstall(l) : null} />)}
+        : filtered.map((l, i) => <LogRow key={l.id ?? i} log={l} job={(installJobs || []).find(j => j.id === l.installJobId) || null} onDelete={() => onDelete(l)} onEditInstall={(isAdmin || l.by === me) && onEditInstall ? () => onEditInstall(l) : null} />)}
     </div>
   );
 }
 
-function LogRow({ log, onDelete, onEditInstall }) {
+function LogRow({ log, job, onDelete, onEditInstall }) {
   const items = log.items && log.items.length ? log.items : null;
   const multi = items && items.length > 1;
+  const [showJob, setShowJob] = useState(false);
   return (
     <div className="list-item">
       <div className="item-meta"><div className="item-time">{log.date} · {log.time}</div><div className="item-by">{log.by}</div></div>
@@ -1852,12 +1899,17 @@ function LogRow({ log, onDelete, onEditInstall }) {
       )}
       {log.notes && <div style={{ fontSize: 12, color: "#8A8073" }}>{log.notes}</div>}
       {log.photo && <img src={log.photo} alt="entry" className="photo-preview" />}
-      {log.installationNeeded && (
+      {log.deliveryType === "installation" && (
         <div style={{ background: "var(--bg)", borderRadius: 10, padding: "8px 10px" }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A" }}>🛠️ Installation Needed</div>
-          <div style={{ fontSize: 12, color: "#8A8073" }}>{log.installer || "No installer assigned yet"}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#221E1A" }}>🛠️ Delivery & Installation</div>
+            {job && <span className={`badge badge-${job.status}`}>{JOB_STATUS_LABEL[job.status]}</span>}
+          </div>
+          <div style={{ fontSize: 12, color: "#8A8073" }}>{log.installer || "No installer assigned yet"}{job?.address ? ` · ${job.address}` : ""}</div>
+          {job && <button className="btn btn-ghost btn-xs" style={{ marginTop: 4 }} onClick={() => setShowJob(s => !s)}>{showJob ? "▾ Hide Job Details" : "▸ View Job Details"}</button>}
         </div>
       )}
+      {job && showJob && <InstallJobCard j={job} onEdit={onEditInstall} />}
       {(log.product || onDelete || onEditInstall) && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {log.product && <>
@@ -1866,40 +1918,11 @@ function LogRow({ log, onDelete, onEditInstall }) {
             <button className="btn btn-ghost btn-xs" onClick={() => downloadDoc(log, "DO")}>⬇ DO</button>
             <button className="btn btn-ghost btn-xs" onClick={() => printDoc(log, "DO")}>🖨 DO</button>
           </>}
-          {onEditInstall && <button className="btn btn-ghost btn-xs" onClick={onEditInstall}>✎ Edit Installation</button>}
+          {onEditInstall && <button className="btn btn-ghost btn-xs" onClick={onEditInstall}>{job ? "✎ Edit Installation" : "+ Add Installation"}</button>}
           {onDelete && <button className="btn btn-danger btn-xs" onClick={onDelete}>🗑 Delete</button>}
         </div>
       )}
     </div>
-  );
-}
-
-// Lets Admin or the salesperson who created the order set/change whether installation is
-// needed and which installer is assigned — after the order already exists, without
-// touching the delivered/returned/stock figures already recorded against it.
-function OrderInstallModal({ log, installers, onSave, onClose }) {
-  const [needed, setNeeded] = useState(!!log.installationNeeded);
-  const [installer, setInstaller] = useState(log.installer || "");
-  const save = () => onSave({ installationNeeded: needed, installer: needed ? installer : "" });
-  return (
-    <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}>
-      <div className="modal-handle" /><div className="modal-title">Edit Installation Info</div>
-      <div className="card-sub" style={{ marginBottom: 4 }}>{log.product}{log.dealer ? ` · ${log.dealer}` : ""} · {log.date}</div>
-      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-        <input type="checkbox" checked={needed} onChange={e => setNeeded(e.target.checked)} />
-        Installation Needed
-      </label>
-      {needed && (
-        <div className="form-group"><div className="field-label">Installer</div>
-          <select className="field-select" value={installer} onChange={e => setInstaller(e.target.value)}>
-            <option value="">Select an installer…</option>
-            {installers.map(i => <option key={i.id} value={i.name}>{i.name}</option>)}
-          </select>
-          {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installers yet — add one in the Installers page first.</div>}
-        </div>
-      )}
-      <div className="modal-actions"><button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
-    </div></div>
   );
 }
 
@@ -2779,24 +2802,6 @@ function InstallJobCard({ j, onEdit }) {
   );
 }
 
-function InstallJobsPage({ jobs, onAdd, onEdit }) {
-  const [tab, setTab] = useState("active");
-  const active = jobs.filter(j => j.status !== "completed");
-  const completed = jobs.filter(j => j.status === "completed");
-  const list = tab === "active" ? active : completed;
-  return (
-    <div className="content">
-      <div className="section-hdr"><div className="section-title">Installation Jobs ({jobs.length})</div><button className="btn btn-primary btn-sm" onClick={onAdd}>+ New Job</button></div>
-      <div className="page-tabs">
-        <button className={`btn btn-sm ${tab === "active" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("active")}>Active ({active.length})</button>
-        <button className={`btn btn-sm ${tab === "completed" ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab("completed")}>Completed ({completed.length})</button>
-      </div>
-      {list.length === 0 ? <div className="empty"><div className="empty-icon">🛠️</div><div className="empty-lbl">{tab === "active" ? "No active installation jobs." : "No completed jobs yet."}</div></div>
-        : list.map(j => <InstallJobCard key={j.id} j={j} onEdit={onEdit} />)}
-    </div>
-  );
-}
-
 function InstallJobModal({ edit, users, products, dealers, onSave, onClose }) {
   const installers = users.filter(u => u.role === "installer");
   const [product, setProduct] = useState(edit?.product || "");
@@ -2839,7 +2844,7 @@ function InstallJobModal({ edit, users, products, dealers, onSave, onClose }) {
           <option value="">Not tied to a dealer</option>
           {dealers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
         </select>
-        <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>Not shown on the PO/DO — used later to consolidate billing and to route any damage reports to the right salesperson.</div>
+        <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>Not shown on the PO/DO — used to bill this dealer a Tax Invoice once the job is completed, and to route any damage reports to the right salesperson.</div>
       </div>
       <div className="form-group"><div className="field-label">Jobsite Address</div><input className="field-input" placeholder="Full installation address" value={address} onChange={e => setAddress(e.target.value)} /></div>
       <div className="form-group"><div className="field-label">Collection Point</div><input className="field-input" placeholder="Where to collect the goods (e.g. warehouse)" value={collectPoint} onChange={e => setCollectPoint(e.target.value)} /></div>
@@ -3475,7 +3480,7 @@ function FinancePage({ logs, claims, invoices, supplierPayments, onGenerateInvoi
           ) : (
             <>
               {previewBilling.map(b => {
-                const existing = invoices.find(i => i.dealer === b.dealer && i.monthISO === previewMonth);
+                const existing = invoices.find(i => i.dealer === b.dealer && i.monthISO === previewMonth && i.source !== "job");
                 return (
                   <div className="user-row" key={b.dealer} style={{ marginBottom: 8 }}>
                     <div style={{ minWidth: 0 }}>
@@ -3556,7 +3561,7 @@ function InvoiceRow({ i, onMarkPaid, onMarkSent }) {
   return (
     <div className="list-item">
       <div className="item-meta">
-        <div style={{ fontWeight: 700 }}>{i.dealer}</div>
+        <div style={{ fontWeight: 700 }}>{i.source === "job" ? "🛠️ " : ""}{i.dealer}</div>
         <div style={{ display: "flex", gap: 6 }}>
           <span className={`badge ${i.status === "paid" ? "badge-reviewed" : "badge-pending"}`}>{i.status}</span>
           <span className={`badge ${i.sent ? "badge-reviewed" : "badge-rejected"}`}>{i.sent ? "sent" : "not sent"}</span>
@@ -3713,8 +3718,17 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
   const [rows,setRows]=useState([{ product: "", delivered: "", returned: "", exchanged: "" }]);
   const [notes,setNotes]=useState(""); const [photo,setPhoto]=useState(null);
   const [dateISO,setDateISO]=useState(todayISO());
-  const [installationNeeded,setInstallationNeeded]=useState(false);
+  const [deliveryType, setDeliveryType] = useState("delivery"); // "delivery" | "installation"
   const [installer,setInstaller]=useState("");
+  const [installProduct, setInstallProduct] = useState("");
+  const [installQty, setInstallQty] = useState("");
+  const [installCollectWarehouse, setInstallCollectWarehouse] = useState("dispatch");
+  const [installAddress, setInstallAddress] = useState("");
+  const [installCollectPoint, setInstallCollectPoint] = useState("");
+  const [installDateISO, setInstallDateISO] = useState(todayISO());
+  const [installTimeFrom, setInstallTimeFrom] = useState("");
+  const [installTimeTo, setInstallTimeTo] = useState("");
+  const [installNotes, setInstallNotes] = useState("");
   const [err,setErr]=useState("");
   const hp=e=>handlePhoto(e,setPhoto);
   const priceFor = name => Number(products.find(p=>p.name===name)?.price)||0;
@@ -3722,12 +3736,31 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
   const addRow = () => setRows([...rows, { product: "", delivered: "", returned: "", exchanged: "" }]);
   const removeRow = i => setRows(rows.filter((_, idx) => idx !== i));
   const amount = rows.reduce((s, r) => s + priceFor(r.product) * (Number(r.delivered)||0), 0);
+  // Only rows that actually got delivered units can be picked as "what to install".
+  const installCandidates = rows.filter(r => r.product && Number(r.delivered) > 0);
+  const chooseDeliveryAndInstall = () => {
+    setDeliveryType("installation");
+    if (!installProduct && installCandidates[0]) { setInstallProduct(installCandidates[0].product); setInstallQty(installCandidates[0].delivered); }
+    if (!installAddress) setInstallAddress(dealers.find(d => d.name === dealer)?.address || "");
+  };
   const save=()=>{
     if(!dealer){ setErr("Please select a dealer."); return; }
     const items = rows.filter(r => r.product && (Number(r.delivered) || Number(r.returned) || Number(r.exchanged)))
       .map(r => ({ product: r.product, price: priceFor(r.product), sold: Number(r.delivered)||0, returned: Number(r.returned)||0, exchanged: Number(r.exchanged)||0 }));
     if(items.length === 0){ setErr("Add at least one product with a delivered, returned or exchanged quantity."); return; }
     if(!dateISO){ setErr("Please select a date."); return; }
+    let installJob;
+    if (deliveryType === "installation") {
+      if (!installer) { setErr("Select an installer for this delivery & installation order."); return; }
+      if (!installProduct || !installQty || Number(installQty) <= 0) { setErr("Select what's being installed and the quantity."); return; }
+      if (!installAddress || !installDateISO || !installTimeFrom || !installTimeTo) { setErr("Fill in the jobsite address and installation date/time."); return; }
+      installJob = {
+        product: installProduct, qty: Number(installQty) || 0, collectWarehouse: installCollectWarehouse,
+        address: installAddress, collectPoint: installCollectPoint,
+        date: fmtDate(new Date(installDateISO + "T00:00:00")), dateISO: installDateISO,
+        timeFrom: installTimeFrom, timeTo: installTimeTo, installer, notesForInstaller: installNotes,
+      };
+    }
     const dealerRec = dealers.find(d=>d.name===dealer);
     onSave({
       id: Date.now(),
@@ -3737,7 +3770,7 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
       product: items[0].product, price: items[0].price, sold: items[0].sold, returned: items[0].returned, exchanged: items[0].exchanged,
       dealerPhone: dealerRec?.contactPhone || "", dealerEmail: dealerRec?.contactEmail || "",
       notes, photo, by:user.name, date:fmtDate(new Date(dateISO+"T00:00:00")), dateISO, time:fmtTime(),
-      installationNeeded, installer: installationNeeded ? installer : "",
+      deliveryType, installer: deliveryType === "installation" ? installer : "", installJob,
     });
   };
   return (
@@ -3774,17 +3807,53 @@ function LogModal({ user, isAdmin, dealers, products, installers, onSave, onClos
         <span>Returned = damage · Exchanged = wrong size</span>
         {amount>0 && <span style={{fontWeight:700, color:"#221E1A"}}>Amount ${amount.toLocaleString("en-SG",{minimumFractionDigits:2})}</span>}
       </div>
-      <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, fontWeight:600, cursor:"pointer" }}>
-        <input type="checkbox" checked={installationNeeded} onChange={e=>setInstallationNeeded(e.target.checked)}/>
-        Installation Needed
-      </label>
-      {installationNeeded && (
-        <div className="form-group"><div className="field-label">Installer</div>
-          <select className="field-select" value={installer} onChange={e=>setInstaller(e.target.value)}>
-            <option value="">Select an installer…</option>
-            {installers.map(i=><option key={i.id} value={i.name}>{i.name}</option>)}
-          </select>
-          {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installers yet — add one in the Installers page first.</div>}
+      <div style={{ display: "flex", gap: 16 }}>
+        <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+          <input type="checkbox" checked={deliveryType === "installation"} onChange={e => e.target.checked ? chooseDeliveryAndInstall() : setDeliveryType("delivery")}/>
+          Delivery & Installation
+        </label>
+        <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+          <input type="checkbox" checked={deliveryType === "delivery"} onChange={e => setDeliveryType(e.target.checked ? "delivery" : "installation")}/>
+          Delivery Only
+        </label>
+      </div>
+      {deliveryType === "installation" && (
+        <div style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 10px 4px" }}>
+          <div className="form-group"><div className="field-label">What's being installed</div>
+            <select className="field-select" value={installProduct} onChange={e => {
+              setInstallProduct(e.target.value);
+              const match = installCandidates.find(r => r.product === e.target.value);
+              if (match) setInstallQty(match.delivered);
+            }}>
+              <option value="">Select a product…</option>
+              {installCandidates.map((r, i) => <option key={i} value={r.product}>{r.product}</option>)}
+            </select>
+            {installCandidates.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>Enter a delivered quantity above first.</div>}
+          </div>
+          <div className="input-row-2">
+            <div className="form-group"><div className="field-label">Qty to Install</div><input className="field-input" type="number" inputMode="numeric" value={installQty} onChange={e=>setInstallQty(e.target.value)}/></div>
+            <div className="form-group"><div className="field-label">Collect From</div>
+              <select className="field-select" value={installCollectWarehouse} onChange={e=>setInstallCollectWarehouse(e.target.value)}>
+                <option value="dispatch">{WAREHOUSE_LABEL.dispatch}</option>
+                <option value="main">{WAREHOUSE_LABEL.main}</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-group"><div className="field-label">Assign Installer</div>
+            <select className="field-select" value={installer} onChange={e=>setInstaller(e.target.value)}>
+              <option value="">Select an installer…</option>
+              {installers.map(i=><option key={i.id} value={i.name}>{i.name}</option>)}
+            </select>
+            {installers.length === 0 && <div style={{ fontSize: 11, color: "#8A8073", marginTop: 6 }}>No installers yet — add one in the Installers page first.</div>}
+          </div>
+          <div className="form-group"><div className="field-label">Jobsite Address</div><input className="field-input" placeholder="Full installation address" value={installAddress} onChange={e=>setInstallAddress(e.target.value)}/></div>
+          <div className="form-group"><div className="field-label">Collection Point</div><input className="field-input" placeholder="Where to collect the goods (e.g. warehouse)" value={installCollectPoint} onChange={e=>setInstallCollectPoint(e.target.value)}/></div>
+          <div className="input-row-3">
+            <div className="form-group"><div className="field-label">Date</div><input className="field-input" type="date" value={installDateISO} onChange={e=>setInstallDateISO(e.target.value)}/></div>
+            <div className="form-group"><div className="field-label">From</div><input className="field-input" type="time" value={installTimeFrom} onChange={e=>setInstallTimeFrom(e.target.value)}/></div>
+            <div className="form-group"><div className="field-label">To</div><input className="field-input" type="time" value={installTimeTo} onChange={e=>setInstallTimeTo(e.target.value)}/></div>
+          </div>
+          <div className="form-group"><div className="field-label">Notes for Installer</div><input className="field-input" placeholder="Optional" value={installNotes} onChange={e=>setInstallNotes(e.target.value)}/></div>
         </div>
       )}
       <div className="form-group"><div className="field-label">Notes</div><input className="field-input" placeholder="Any remarks..." value={notes} onChange={e=>setNotes(e.target.value)}/></div>
